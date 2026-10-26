@@ -1,8 +1,8 @@
 diff --git a/dom/media/systemservices/objc_video_capture/device_info_objc.mm b/dom/media/systemservices/objc_video_capture/device_info_objc.mm
-index 048565e04cd9..6dd550a0c015 100644
+index 048565e04cd9..8e7b9fef944f 100644
 --- a/dom/media/systemservices/objc_video_capture/device_info_objc.mm
 +++ b/dom/media/systemservices/objc_video_capture/device_info_objc.mm
-@@ -50,8 +50,13 @@
+@@ -50,8 +50,13 @@ + (int)captureDeviceCount {
    @try {
      for (AVCaptureDevice* device in
           [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo]) {
@@ -18,7 +18,7 @@ index 048565e04cd9..6dd550a0c015 100644
        }
        cnt++;
      }
-@@ -66,8 +71,13 @@
+@@ -66,8 +68,13 @@ + (AVCaptureDevice*)captureDeviceForIndex:(int)index {
    @try {
      for (AVCaptureDevice* device in
           [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo]) {
@@ -34,12 +34,14 @@ index 048565e04cd9..6dd550a0c015 100644
        }
        if (cnt == index) {
          return device;
-@@ -84,8 +94,10 @@
- + (AVCaptureDevice*)captureDeviceForUniqueId:(NSString*)uniqueId {
+@@ -84,8 +84,13 @@ + (AVCaptureDevice*)captureDeviceForUniqueId:(NSString*)uniqueId {
    for (AVCaptureDevice* device in
         [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo]) {
 -    if ([device isSuspended]) {
 -      continue;
++    // -isSuspended is iOS 14+. On iOS 12/13 every device counts as
++    // available. (Previously the missing selector raised inside @try and
++    // zeroed the whole count, hiding all cameras on iOS 12.)
 +    if (@available(iOS 14.0, *)) {
 +      if ([device isSuspended]) {
 +        continue;
@@ -47,3 +49,4 @@ index 048565e04cd9..6dd550a0c015 100644
      }
      if ([uniqueId isEqual:device.uniqueID]) {
        return device;
+     }

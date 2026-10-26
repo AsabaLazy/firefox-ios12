@@ -32,6 +32,13 @@ final class HomepageViewController: UINavigationController {
     
     // MARK: - Lifecycle
     
+    override var preferredStatusBarStyle: UIStatusBarStyle {
+        if #available(iOS 26.0, *) {
+            return .default
+        }
+        return super.preferredStatusBarStyle
+    }
+    
     init(bookmarkStore: BookmarkStore = .shared, isPrivateBrowsing: Bool = false) {
         self.bookmarkStore = bookmarkStore
         self.isPrivateBrowsing = isPrivateBrowsing
@@ -76,6 +83,9 @@ final class HomepageViewController: UINavigationController {
         viewControllers.forEach { viewController in
             (viewController as? HomepageRootViewController)?.setContentMode(contentMode)
         }
+        if isViewLoaded {
+            updateNavigationBarAppearance()
+        }
     }
     
     func setShowsBackground(_ showsBackground: Bool) {
@@ -119,8 +129,20 @@ final class HomepageViewController: UINavigationController {
     private func configureAppearance() {
         updateBackgroundColor()
         delegate = self
-        navigationBar.isTranslucent = false
+        updateNavigationBarAppearance()
+        navigationBar.isTranslucent = true
         setNavigationBarHidden(true, animated: false)
+    }
+    
+    private func updateNavigationBarAppearance() {
+        let foregroundColor = HomepageWallpaper.foregroundColor(for: contentMode)
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithTransparentBackground()
+        appearance.titleTextAttributes = [.foregroundColor: foregroundColor]
+        navigationBar.standardAppearance = appearance
+        navigationBar.scrollEdgeAppearance = appearance
+        navigationBar.compactAppearance = appearance
+        navigationBar.tintColor = foregroundColor
     }
     
     private func updateBackgroundColor() {
@@ -130,6 +152,7 @@ final class HomepageViewController: UINavigationController {
 
 extension HomepageViewController: UINavigationControllerDelegate {
     func navigationController(_ navigationController: UINavigationController, willShow viewController: UIViewController, animated: Bool) {
+        updateNavigationBarAppearance()
         setNavigationBarHidden(viewController === rootViewController, animated: false)
     }
 }

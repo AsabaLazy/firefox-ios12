@@ -67,6 +67,9 @@ public protocol NavigationDelegate {
     func onLoadRequest(session: GeckoSession, request: LoadRequest, completion: @escaping (AllowOrDeny) -> Void)
     func onPreNavigation(session: GeckoSession, request: LoadRequest, completion: @escaping (AllowOrDeny) -> Void)
     func onSubframeLoadRequest(session: GeckoSession, request: LoadRequest, completion: @escaping (AllowOrDeny) -> Void)
+    // Upstream load-error pages (sync, no Concurrency): return custom error
+    // page HTML, or nil for the default page.
+    func onLoadError(session: GeckoSession, error: WebRequestError) -> String?
     func onNewSession(
         session: GeckoSession,
         uri: String,
@@ -83,6 +86,7 @@ extension NavigationDelegate {
     public func onLoadRequest(session: GeckoSession, request: LoadRequest, completion: @escaping (AllowOrDeny) -> Void) { completion(.allow) }
     public func onPreNavigation(session: GeckoSession, request: LoadRequest, completion: @escaping (AllowOrDeny) -> Void) { completion(.allow) }
     public func onSubframeLoadRequest(session: GeckoSession, request: LoadRequest, completion: @escaping (AllowOrDeny) -> Void) { completion(.allow) }
+    public func onLoadError(session: GeckoSession, error: WebRequestError) -> String? { nil }
     public func onNewSession(session: GeckoSession, uri: String, windowId: String, target: LoadRequestTarget, completion: @escaping (GeckoSession?) -> Void) { completion(nil) }
 }
 
@@ -170,9 +174,7 @@ func newNavigationHandler(_ session: GeckoSession) -> GeckoSessionHandler {
             }
 
         case .onLoadError:
-            NSLog("[PROBE] OnLoadError message=%@", String(describing: message))
-            completion(.success(nil))
-
+            completion(.success(delegate?.onLoadError(session: session, error: WebRequestError(message: message))))
         case .onLoadRequest:
             guard let request = loadRequest(from: message) else {
                 completion(.success(true))

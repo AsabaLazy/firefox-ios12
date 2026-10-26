@@ -36,7 +36,7 @@ final class ActionBar: UIView {
     }
     
     enum Item: Equatable {
-        case findInPage
+        case findInPage(query: String? = nil)
         case pageZoom
         case keyboardDismissal
         
@@ -76,7 +76,11 @@ final class ActionBar: UIView {
     private(set) var item: Item?
     
     var isShowingFindInPage: Bool {
-        return item == .findInPage && !isHidden
+        guard case .findInPage? = item else {
+            return false
+        }
+        
+        return !isHidden
     }
     
     var isShowingKeyboardDismissal: Bool {
@@ -202,17 +206,19 @@ final class ActionBar: UIView {
             }
             hasDismissedModernContent = false
         }
-        if item != .findInPage {
+        if case let .findInPage(query)? = item {
+            if !isShowingFindInPage || query != nil {
+                hasPreparedFindInPageDismissal = false
+                findInPageActionBar.prepareForPresentation(query: query)
+            }
+            findInPageActionBar.isHidden = false
+        } else {
             prepareForDismissal()
-        }
-        if item == .findInPage, self.item != .findInPage {
-            hasPreparedFindInPageDismissal = false
-            findInPageActionBar.prepareForPresentation()
+            findInPageActionBar.isHidden = true
         }
         self.item = item
         updateHeight()
         isHidden = item == nil
-        findInPageActionBar.isHidden = item != .findInPage
         pageZoomActionBar.isHidden = item != .pageZoom
         keyboardDismissalActionBar.isHidden = item != .keyboardDismissal
         if #unavailable(iOS 26.0) {
@@ -252,7 +258,7 @@ final class ActionBar: UIView {
     }
     
     func prepareForDismissal() {
-        guard item == .findInPage, !hasPreparedFindInPageDismissal else {
+        guard case .findInPage? = item, !hasPreparedFindInPageDismissal else {
             return
         }
         
@@ -301,7 +307,7 @@ final class ActionBar: UIView {
     
     private func updateHeight() {
         var bottomInset: CGFloat = 0
-        if #available(iOS 26.0, *), item == .findInPage, !isKeyboardDocked {
+        if #available(iOS 26.0, *), case .findInPage? = item, !isKeyboardDocked {
             bottomInset = safeAreaInsets.bottom
         }
         heightConstraint.constant = (item?.style.height ?? ActionBarStyle.standard.height) + bottomInset

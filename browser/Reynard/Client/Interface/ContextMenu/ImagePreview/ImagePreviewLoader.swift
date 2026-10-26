@@ -5,10 +5,13 @@
 //  Created by Minh Ton on 16/6/26.
 //
 
+import GeckoView
 import UIKit
 
 struct ImagePreviewLoader {
-    static func image(from url: URL, completion: @escaping (UIImage?) -> Void) {
+    // Upstream routes through Gecko networking (authenticated images + WebP),
+    // kept here in completion style.
+    static func image(from url: URL, in session: GeckoSession, completion: @escaping (UIImage?) -> Void) {
         if url.isFileURL {
             let image = UIImage(contentsOfFile: url.path)
             DispatchQueue.main.async {
@@ -24,13 +27,12 @@ struct ImagePreviewLoader {
             }
             return
         }
-
-        URLSession.shared.dataTask(with: url) { data, _, _ in
+        session.fetchImageData(from: url) { data in
             let image = data.flatMap { UIImage(data: $0) }
             DispatchQueue.main.async {
                 completion(image)
             }
-        }.resume()
+        }
     }
     
     private static func imageFromDataURL(_ value: String) -> UIImage? {

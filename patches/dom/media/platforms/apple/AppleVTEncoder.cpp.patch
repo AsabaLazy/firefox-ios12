@@ -1,5 +1,5 @@
 diff --git a/dom/media/platforms/apple/AppleVTEncoder.cpp b/dom/media/platforms/apple/AppleVTEncoder.cpp
-index 004560faacd9..6245d7647b9d 100644
+index ec208f2..05e13c1 100644
 --- a/dom/media/platforms/apple/AppleVTEncoder.cpp
 +++ b/dom/media/platforms/apple/AppleVTEncoder.cpp
 @@ -34,13 +34,22 @@ extern LazyLogModule sPEMLog;
@@ -57,7 +57,7 @@ index 004560faacd9..6245d7647b9d 100644
    const void* values[] = {aHardwareNotAllowed ? kCFBooleanFalse
                                                : kCFBooleanTrue};
  
-@@ -86,10 +107,17 @@ bool AppleVTEncoder::SetAverageBitrate(uint32_t aBitsPerSec) {
+@@ -98,16 +119,22 @@ bool AppleVTEncoder::SetAverageBitrate(uint32_t aBitsPerSec) {
  bool AppleVTEncoder::SetConstantBitrate(uint32_t aBitsPerSec) {
    MOZ_ASSERT(mSession);
  
@@ -78,7 +78,13 @@ index 004560faacd9..6245d7647b9d 100644
      if (rv == kVTPropertyNotSupportedErr) {
        LOGE("Constant bitrate not supported.");
      }
-@@ -126,9 +154,17 @@ bool AppleVTEncoder::SetRealtime(bool aEnabled) {
+     return rv == noErr;
+   }
+-  return false;
+ }
+ 
+ bool AppleVTEncoder::SetBitrateAndMode(BitrateMode aBitrateMode,
+@@ -138,9 +165,17 @@ bool AppleVTEncoder::SetRealtime(bool aEnabled) {
      return false;
    }
  
@@ -99,7 +105,7 @@ index 004560faacd9..6245d7647b9d 100644
      LOGD("{} PrioritizeEncodingSpeedOverQuality, status: {}",
           aEnabled ? "Enable" : "Disable", status);
      if (status != noErr && status != kVTPropertyNotSupportedErr) {
-@@ -560,7 +596,18 @@ MediaResult AppleVTEncoder::InitSession() {
+@@ -572,7 +607,18 @@ MediaResult AppleVTEncoder::InitSession() {
    }
  
    if (mConfig.mScalabilityMode != ScalabilityMode::None) {
@@ -119,7 +125,7 @@ index 004560faacd9..6245d7647b9d 100644
        float baseLayerFPSRatio = 1.0f;
        switch (mConfig.mScalabilityMode) {
          case ScalabilityMode::L1T2:
-@@ -576,17 +623,13 @@ MediaResult AppleVTEncoder::InitSession() {
+@@ -588,17 +634,13 @@ MediaResult AppleVTEncoder::InitSession() {
            MOZ_ASSERT_UNREACHABLE("Unhandled value");
        }
  
@@ -138,7 +144,7 @@ index 004560faacd9..6245d7647b9d 100644
      }
    }
  
-@@ -625,11 +668,18 @@ MediaResult AppleVTEncoder::InitSession() {
+@@ -637,11 +679,18 @@ MediaResult AppleVTEncoder::InitSession() {
      return colorSpaceResult;
    }
  

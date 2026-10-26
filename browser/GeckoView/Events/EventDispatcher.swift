@@ -116,7 +116,7 @@ public class GeckoEventDispatcherWrapper: NSObject, SwiftEventDispatcher {
         gecko = dispatcher
     }
     
-    public func dispatch(toSwift type: String!, message: Any!, callback: EventCallback?) {
+    public func dispatch(toSwift type: String, message: Any?, callback: EventCallback?) {
         let message = message as! [String: Any?]?
         if let registeredListeners = listeners[type] {
             for listener in registeredListeners {
@@ -135,7 +135,7 @@ public class GeckoEventDispatcherWrapper: NSObject, SwiftEventDispatcher {
         }
     }
     
-    public func hasListener(_ type: String!) -> Bool {
+    public func hasListener(_ type: String) -> Bool {
         listeners.keys.contains(type)
     }
 }
