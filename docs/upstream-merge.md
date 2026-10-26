@@ -535,3 +535,13 @@
   user.js 已移走（备份在机上 /tmp/user.js.round1，profile 恢复干净）。
   下一步：量一次真冷（重启机器后首启）定尺，再决定是削启动期 JS、
   延后非关键初始化还是只做启动遮罩。
+- **冷启动回归 A/B（2026-10-27 01:2x，同机背靠背，T+22~32s 主线程采样 + probe gap）**：
+  0.19-Debug（CPU 32%，xul_inner 1545，重度 JS，gap 19s）/
+  0.19-Release（CPU 12.8%，xul_inner 138，10s 内走完 startup 消息无 gap）/
+  0.15-Release（CPU 6%，xul_inner 0，全 idle）。
+  结论：用户体感的“0.15 不慢、现在慢”主因是**这晚一直在跑 Debug 包**
+  （-Onone + 断言，主线程启动 JS 开销约 10 倍），不是 0.15→0.19 的引擎/App 回归；
+  Release 下 0.15/0.19 同暖机条件只差 0 vs 138（单次 10s 采样量级，可能是相位噪声，
+  未达回归实锤）。已装回 0.19-Release（T+50s 主页全绘、1.7% idle 可点）。
+  如真冷 Release 下仍觉 0.19 慢，再做 4 连发全覆盖 A/B；否则此案以“日常用 Release、
+  Debug 只做开发”关闭。
