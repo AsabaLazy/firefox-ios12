@@ -478,3 +478,14 @@
   example.com，当前 direct 档下报 unknownHost，DNS 一节还没闭环）；收藏点按
   是否进后台标签（用户待看 □ 标签页）；Helper 间歇崩（Renderer/GLEngine，
   主进程无碍，appex 无 GPU 可用意料之中，另案）。
+- **socket 修验证中状态（同夜 21:20，未闭环）**：编译期双 false 包（戳 5da36ee）
+  装机后 user.js 已删、干净冷启：example.com 从 unknownHost 变成标题栏解析出
+  `Example Do…`（DNS+TCP+HTTP 全通，方向证实），但 body 持续白板、0% CPU
+  （标题有、正文无；file bench 照常绘出 RUNS）。netstat 同期无残留连接
+  （数据到齐或连接已收），IP 直连同样标题有、正文无——问题收敛到 http 通道
+  首刷之后的数据泵/绘制 stall（file/about 不走这条路故正常），待引擎侧深挖。
+  另三条经验：① 删 profile 目录会软砖启动（profiles.ini 悬空指向，无崩溃日志、
+  进程直接消失，恢复目录即活，勿动）；② 脏 profile 下地址栏自动补全会顶掉输入
+  （neverssl 被换成历史里的广告域，切忌用迁移 profile 测地址栏语义）；
+  ③ cycript 跑在主线程，遍历期间手指点按全被吞——"点不动"先排除自家干扰，
+  拿 `ps`+截屏做无注入观察。
