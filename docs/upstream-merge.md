@@ -446,6 +446,18 @@
   出路：用户把 .53 代理开起来，或 iPhone 关 WiFi 代理后重测。另记：
   `utun0` 只是 iMessage IDS 隧道，无害；本次还顺手确认了新代理码能正确读出
   系统代理（0.19.0 功能点本身是好的）。
+- **http 全断根因（同夜续）：158 把 socket 进程在 iOS 上默认打开了**：
+  `StaticPrefList.yaml` 里 `network.process.enabled` 与
+  `network.http.network_access_on_socket_process.enabled` 在 156 还是
+  `XP_IOS → false`，158 上游为 BrowserEngineKit 多进程改成 `XP_IOS → true`，
+  0.19.0 合并照单收下——而本移植单进程起不来 socket 进程：
+  DNS+TCP 全灭（unknownHost + 无法连接），file/about（不走 socket）正常。
+  前一条"环境代理挡住"的结论更正：App 本就是 direct 档（机上偏好无
+  NetworkProxy 键），.53 死活与 App 无关；user.js 双 false 实验证明方向
+  （DNS/TCP/HTTP 当场通、标题都解析出来了，残留 body 未绘是另一节）。
+  修：编译期打回 false（156 形状；mobile.js 里本就有同值两行，双保险），
+  patch 两处 hunk 头随行数重算并与 `git diff HEAD` 全文件对过。
+  注意 StaticPref 改动触发宽域重编（603 对象 + gkrust，约 50 分钟）。
 - **0.19.0 真机装机验证（2026-10-26 夜，iPhone 5s/12.5.8，包
   `dist/Reynard-Jailbroken.ipa` 戳 2176816，备份在仓库外
   `reynard-ipa-backups/Reynard-Jailbroken-0.19.0-2176816.ipa`）**：
