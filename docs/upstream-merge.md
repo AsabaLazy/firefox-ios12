@@ -514,3 +514,15 @@
   方向：socket 双 false + proxy DIRECT 回落在 Debug 已生效，Release 侧待重打
   重测对照；当前 WiFi（1.64）`scutil --proxy` 无 HTTP 代理、直连 200，.2/.5
   代理属别的网络记忆、可忽略。
+- **冷启动 60 秒触摸假死定位（2026-10-26 夜，同一 Debug 包，iPhone 5s/USB syslog
+  + 机上 spindump，launch 00:32:15）**：用户报“有东西盖住、点不动、只有脚本能点”，
+  实为 launch 期主线程被饿死 60 秒，排队触摸解冻后一起触发。donation 卡静态无辜
+  （装饰层 interaction 全关、无全屏容器，且卡可见时触摸已恢复）。
+  证据：syslog probe `00:32:21.3 flush=7` 后 19 秒零跨进程消息；spindump-1
+  （忙时 32% CPU）主线程 `nsAppShell::Run → js::Interpret/Call/GetProperty` 全是
+  启动期 Gecko JS；spindump-2（87 秒）主线程已回正常 mach_idle。
+  坑：atos 必须先按 UUID 定镜像基址——同偏移 92014044 先误判成 libmozglue/
+  AddonPopup（`--check`式教训重演），按 XUL UUID 重定基址后才是正解。
+  下一步：user.js 二分禁启动期服务（normandy/telemetry/captive/safebrowsing/
+  addon-update/push，不碰 JIT/代理/socket/webgl），同协议量“起了→动了”时长；
+  若收敛则继续二分到具体子系统，不急着动引擎。
