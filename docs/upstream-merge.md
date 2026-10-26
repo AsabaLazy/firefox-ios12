@@ -430,3 +430,19 @@
   无 assistant"，正是误判根源）；patch 头随行数 `4246`→`4245`（删了一行注释，
   头差一行未来整包重打会直接 apply 失败——又是 0918 坑的镜像）。
   另：`GeckoEditableSupport.h` 去重后 patch/工作树已逐字节对过。
+- **同日 file:// 白屏：代理空列表直接判失败**：0.19.0 新文件
+  `nsIOSSystemProxySettings.mm`（上游 13+ 移植）在 `GetProxyForURI` 末尾
+  `return aResult.IsEmpty() ? NS_ERROR_FAILURE : NS_OK`——`file://` 这类
+  `CFNetworkCopyProxiesForURL` 返回空数组的 URL 直接 NS_ERROR，包内 bench 页
+  白屏（0.14.0 没这个文件，直连，正常）。同机 http 反而走到正确分支
+  （按系统代理配出 `PROXY 192.168.1.53:7890`，见下），侧证了定位。
+  修：空结果回落 `DIRECT` 再 `NS_OK`（无代理信息=直连，恢复 0.14.0 行为；
+  未知类型维持失败不变，不扩大范围）。patch 头同步 `180`→`184`。
+- **同机 http 验证被局域网代理挡住（环境问题，非 bug）**：机上 WiFi 配了手动
+  代理 `192.168.1.53:7890`（Clash 常用端口），`CFNetworkCopySystemProxySettings`
+  照实返回，App 正确走代理——但该端口已死（`curl -x` 000/exit 52），故
+  example.com 报"找不到网址"错误页（0.19.0 新 WebContentErrorView，本身渲染
+  正常，反而证明了引擎内容管线全通）；机上 shell curl 因不走代理直连 200。
+  出路：用户把 .53 代理开起来，或 iPhone 关 WiFi 代理后重测。另记：
+  `utun0` 只是 iMessage IDS 隧道，无害；本次还顺手确认了新代理码能正确读出
+  系统代理（0.19.0 功能点本身是好的）。
