@@ -365,3 +365,14 @@
   （22 处，nil 消息安全已逐点核对），菜单 show/hide 加 13 回退，setupTextInput
   加 textInteractionForMode 守卫；nsAppShell/scene、device_info、Touch、字体两处
   均为既有守卫模式；cubeb/PointerSupport/permission 均为旧 API 文本误报。
+- **2026-10-26 本地 Gecko 编复现 0918 静默截断坑**：`fca7136c` 给
+  `nsIOSSystemProxySettings.mm.patch` 加 13/16 双分支时 hunk 头写 `+1,179`，
+  实际正文 180 行（`tail -n +7 patch | grep -c '^+'` 减 `+++` 行），尾部 `}`
+  被 `git apply` 静默丢掉，工作树 179 行，`mach build` 34 分钟后才在
+  `nsIOSSystemProxySettings.mm:179` 报 `expected '}'`。修：头改 `+1,180` +
+  工作树补 `}`，`tail -n +7 patch | sed 's/^+//' | diff - 工作树` 逐字节一致。
+  教训：new-file patch 改完必须数 `+` 行数核对头 + 产物对比，`--check` 不报错
+  不代表打全（见 0918 节）。同提交的 `GeolocationSystemUIKit.mm.patch`
+  头 `+1,232` 与正文 232 一致，无碍。另：本机编需把 Xcode 26.5 工具链放
+  `PATH` 前盖掉 Homebrew llvm 23（否则 target linker 检查挂），`python3`
+  用 3.14 shim（3.15 的 zstandard 编不过，Mach 明确建议 ≤3.14）。

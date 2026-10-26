@@ -3,7 +3,7 @@ new file mode 100644
 index 000000000000..865fab331c89
 --- /dev/null
 +++ b/toolkit/system/iosproxy/nsIOSSystemProxySettings.mm
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,180 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
