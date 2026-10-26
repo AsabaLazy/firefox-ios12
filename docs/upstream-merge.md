@@ -376,3 +376,12 @@
   头 `+1,232` 与正文 232 一致，无碍。另：本机编需把 Xcode 26.5 工具链放
   `PATH` 前盖掉 Homebrew llvm 23（否则 target linker 检查挂），`python3`
   用 3.14 shim（3.15 的 zstandard 编不过，Mach 明确建议 ≤3.14）。
+- **同日续编又爆 `GeckoEditableSupport.h: duplicate member`**：0.19.0 合并时
+  scratch 重建的整文件 patch 把 `mPendingSelectionGeometryRefresh` /
+  `mSelectionHandleSuppressionAssertion` 收了两遍（`struct GeckoEditableState`
+  里各出现两次），`mEditable = {}` 的 2 个 error 是连带（类型本身非法，
+  隐式赋值运算符直接不可用）。修：以后一块（158 新增状态区）里删掉重复两行，
+  保留 `mPendingKeyboardContextUpdate/mSelectionActivated/mAsyncScrollInProgress/
+  mPreparingBackwardDeletionSelection/mSelectionAffinity`，头 `+1,178`→`+1,176`，
+  工作树同步删并逐字节对过。教训：整文件重建 patch 入库前必须把成员名
+  `sort | uniq -d` 过一遍，编译器要到 34 分钟后才报，贵。
