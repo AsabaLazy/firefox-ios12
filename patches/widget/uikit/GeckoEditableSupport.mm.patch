@@ -3,7 +3,7 @@ new file mode 100644
 index 00000000..c4e77f46
 --- /dev/null
 +++ b/widget/uikit/GeckoEditableSupport.mm
-@@ -0,0 +1,4246 @@
+@@ -0,0 +1,4245 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1614,12 +1614,11 @@ index 00000000..c4e77f46
 +
 +@implementation ChildView (Shared)
 +
-+// -interactionAssistant is iOS 15+. On iOS 12-14 there is no assistant;
-+// callers throughout this file already tolerate nil (respondsToSelector
-+// checks and nil messaging), so centralize the version check here.
++// Centralize access to ChildView's own interactionAssistant (Gecko's rewrite,
++// not Apple's iOS 15 API); nil-tolerant callers can use this directly.
 +- (id)reynard_interactionAssistantOrNil {
 +  if ([self respondsToSelector:@selector(interactionAssistant)]) {
-+    return [self reynard_interactionAssistantOrNil];
++    return [self interactionAssistant];
 +  }
 +  return nil;
 +}

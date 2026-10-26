@@ -411,3 +411,22 @@
   逐个补 `API_AVAILABLE` 并真机冷启验证，不能只信 PASS。另：`UIMenuElement
   (ReaderSettings)` 分类是自有代码编进包，运行时动态派发 + 调用点已有
   `responds(to:)` 守卫，无碍，不动。
+- **同日真机冷启 30~60 秒后主线程 100% 空转：`reynard_interactionAssistantOrNil`
+  自递归**：0.19.0 合并 scratch 重建的 `GeckoEditableSupport.mm` 里，新 helper
+  把 `return [self interactionAssistant]` 写成了 `return [self
+  reynard_interactionAssistantOrNil]`（同名只差前缀，review 时逐点核对 22 个
+  调用点却没看方法本身两行）。`interactionAssistant` 是 157/158 上游自有重写
+  （GeckoTextInteractionAssistant），不再是苹果 15+ API——12 上
+  `respondsToSelector` 恒真，于是无条件自递归；且是尾调用，clang 编成 JUMP，
+  spindump 里就是扁平一帧（`reynard_interactionAssistantOrNil +32/+44`，500/500
+  采样，0.25c/i 的 objc 收发风暴），看起来像"runloop 回调里转圈"而不是递归，
+  极易误判。定位链：`spindump <pid>`（机上自带，比 lldb 轻）→ 主线程
+  `nsAppShell::Run` 下唯一 XUL 帧 → `atos -o dist/bin/XUL -arch arm64 -l
+  <机上基址>`（UUID 对上就能解，Release 包未全 strip）。触发延迟是因为首次
+  调用要等文本系统初始化（约冷启后 30~60 秒；地址栏 setText 会提前引爆）。
+  此前"setText 长 URL 卡死"的结论更正：不是字符串内容问题，是第二次 setText
+  时恰好撞上 helper 已开始转（主线程饱和，cycript 也跟着超时 124）。
+  修：一词之差改回 `interactionAssistant`，注释同步更正（原注释还写着"12-14
+  无 assistant"，正是误判根源）；patch 头随行数 `4246`→`4245`（删了一行注释，
+  头差一行未来整包重打会直接 apply 失败——又是 0918 坑的镜像）。
+  另：`GeckoEditableSupport.h` 去重后 patch/工作树已逐字节对过。
