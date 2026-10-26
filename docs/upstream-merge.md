@@ -489,3 +489,14 @@
   （neverssl 被换成历史里的广告域，切忌用迁移 profile 测地址栏语义）；
   ③ cycript 跑在主线程，遍历期间手指点按全被吞——"点不动"先排除自家干扰，
   拿 `ps`+截屏做无注入观察。
+- **http 正文 stall 定位进展（同夜 23:00，未闭环，探针包验证）**：
+  临时探针（工作树，未进 patch）：`nsHttpChannel::OnDataAvailable/OnStopRequest`
+  记字节+状态，`ParentProcessDocumentChannel::RedirectToRealChannel/
+  OnRedirectVerifyCallback` 记结果。局域网 98 字节页：PPDC redirect/verify
+  全 NS_OK，ODA 单刷 98/98 + STOP NS_OK——necko 全链无辜（DNS/TCP/HTTP/PPDC/
+  通道全通），标题解析，file/about 照绘，JIT 照跑；仅 http 文档正文不绘，
+  事后全线程 idle 挂起、无崩溃、无错误页。布局帧/错误页显隐查过正常。
+  下一步：visibility 挂起唤醒试重绘，或 presShell/refresh-driver 插桩
+  （`nsDocShell::EndPageLoad`、paint suppression 状态）。另：`cycript -p`
+  约三分之一概率 `InjectLibrary` assert 杀目标（今晚杀了三次），重要结论
+  必须用 `ps` 复核 pid 是否已换人。
