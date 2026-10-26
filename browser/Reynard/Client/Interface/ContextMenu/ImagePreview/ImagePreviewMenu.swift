@@ -5,12 +5,14 @@
 //  Created by Minh Ton on 16/6/26.
 //
 
+import GeckoView
 import UIKit
 
 @available(iOS 13.0, *)
 struct ImagePreviewMenu {
     static func configuration(
         for context: ContextMenuContext,
+        session: GeckoSession,
         showsPreview: Bool,
         isPrivate: Bool,
         sourceView: UIView,
@@ -24,7 +26,7 @@ struct ImagePreviewMenu {
         }
         
         let previewProvider: UIContextMenuContentPreviewProvider? = showsPreview ? {
-            ImagePreviewViewController(url: url)
+            ImagePreviewViewController(url: url, session: session)
         } : nil
         
         return UIContextMenuConfiguration(identifier: UUID().uuidString as NSString, previewProvider: previewProvider) { _ in
@@ -53,7 +55,7 @@ struct ImagePreviewMenu {
                         openImageInNewTab()
                     },
                     UIAction(title: NSLocalizedString("Share Image", comment: ""), image: UIImage(named: "reynard.square.and.arrow.up")) { _ in
-                        loadImage(from: url) { image in
+                        loadImage(from: url, in: session) { image in
                             shareImage(
                                 image,
                                 sourceView,
@@ -62,12 +64,12 @@ struct ImagePreviewMenu {
                         }
                     },
                     UIAction(title: NSLocalizedString("Save to Photos", comment: ""), image: UIImage(named: "reynard.square.and.arrow.down")) { _ in
-                        loadImage(from: url) { image in
+                        loadImage(from: url, in: session) { image in
                             UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
                         }
                     },
                     UIAction(title: NSLocalizedString("Copy Image", comment: ""), image: UIImage(named: "reynard.document.on.document")) { _ in
-                        loadImage(from: url) { image in
+                        loadImage(from: url, in: session) { image in
                             UIPasteboard.general.image = image
                         }
                     },
@@ -81,12 +83,13 @@ struct ImagePreviewMenu {
         }
     }
     
-    private static func loadImage(from url: URL, completion: @escaping (UIImage) -> Void) {
-        ImagePreviewLoader.image(from: url) { image in
-            guard let image else {
+    private static func loadImage(from url: URL, in session: GeckoSession, completion: @escaping (UIImage) -> Void) {
+        ImagePreviewLoader.image(from: url, in: session) { image in
+            guard let image,
+                  let cgImage = image.cgImage else {
                 return
             }
-            completion(image)
+            completion(UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation))
         }
     }
     

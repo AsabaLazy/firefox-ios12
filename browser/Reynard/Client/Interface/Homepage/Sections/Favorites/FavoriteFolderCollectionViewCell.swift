@@ -37,8 +37,16 @@ final class FavoriteFolderCollectionViewCell: UICollectionViewCell {
         for: .systemFont(ofSize: UX.titleFontSize, weight: .semibold)
     )
     
-    private let folderBackgroundView: UIView = {
-        let view = UIView()
+    private let folderBackgroundView: UIVisualEffectView = {
+        // systemChromeMaterial is iOS 13+; on iOS 12 use no blur effect
+        // (backdrop blur costs a full-screen resample per frame on the A7).
+        let effect: UIBlurEffect? = {
+            if #available(iOS 13.0, *) {
+                return UIBlurEffect(style: .systemChromeMaterial)
+            }
+            return nil
+        }()
+        let view = UIVisualEffectView(effect: effect)
         view.translatesAutoresizingMaskIntoConstraints = false
         view.backgroundColor = .appSystemGray5
         view.layer.applyContinuousCornerCurve()
@@ -103,6 +111,14 @@ final class FavoriteFolderCollectionViewCell: UICollectionViewCell {
         super.layoutSubviews()
         updateFolderSize()
     }
+
+    override func apply(_ layoutAttributes: UICollectionViewLayoutAttributes) {
+        super.apply(layoutAttributes)
+        alpha = 1
+        emptyIconView.alpha = layoutAttributes.alpha
+        previewGridView.alpha = layoutAttributes.alpha
+        titleLabel.alpha = layoutAttributes.alpha
+    }
     
     func configure(
         folder: BookmarkFolderSnapshot,
@@ -137,8 +153,8 @@ final class FavoriteFolderCollectionViewCell: UICollectionViewCell {
     
     private func configureHierarchy() {
         contentView.addSubview(folderBackgroundView)
-        folderBackgroundView.addSubview(emptyIconView)
-        folderBackgroundView.addSubview(previewGridView)
+        folderBackgroundView.contentView.addSubview(emptyIconView)
+        folderBackgroundView.contentView.addSubview(previewGridView)
         contentView.addSubview(titleLabel)
     }
     

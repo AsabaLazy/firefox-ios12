@@ -1,5 +1,5 @@
 diff --git a/dom/media/platforms/apple/AppleVTDecoder.cpp b/dom/media/platforms/apple/AppleVTDecoder.cpp
-index 6881412889f5..d6d0d8f31858 100644
+index 6881412889f5..b4f3d750d173 100644
 --- a/dom/media/platforms/apple/AppleVTDecoder.cpp
 +++ b/dom/media/platforms/apple/AppleVTDecoder.cpp
 @@ -6,6 +6,9 @@
@@ -26,43 +26,68 @@ index 6881412889f5..d6d0d8f31858 100644
  #else
        ,
        mUseSoftwareImages(aKnowsCompositor &&
-@@ -435,7 +435,9 @@
+@@ -435,7 +444,7 @@ nsCString AppleVTDecoder::GetCodecName() const {
  
  CFStringRef CGColorSpaceNameForFrame(gfx::TransferFunction aTransferFunction,
                                       gfx::ColorSpace2 aColorPrimaries) {
 -  if (__builtin_available(macOS 11.0, *)) {
-+  // NOTE: __builtin_available(macOS ...) is constantly true on iOS;
-+  // always spell out the iOS version too.
-+  if (__builtin_available(iOS 14.0, macOS 11.0, *)) {
++  if (__builtin_available(macOS 11.0, iOS 14.0, *)) {
      if (aTransferFunction == gfx::TransferFunction::PQ) {
        return kCGColorSpaceITUR_2100_PQ;
      }
-@@ -766,7 +766,14 @@ MediaResult AppleVTDecoder::InitializeSession() {
-   CFBooleanRef isUsingHW = nullptr;
-+#pragma clang diagnostic push
-+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
-+  // The HW-decoder query key is annotated iOS 17+ in the SDK but
-+  // weak-linked: a missing key only fails this query (flag stays false).
-+  // Proven harmless on iOS 12.5.8 (device-tested).
-   rv = VTSessionCopyProperty(
-       mSession,
-       kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
-       kCFAllocatorDefault, &isUsingHW);
-   if (rv == noErr) {
-+#pragma clang diagnostic pop
-+
-     mIsHardwareAccelerated = isUsingHW == kCFBooleanTrue;
-@@ -827,4 +827,9 @@ CFDictionaryRef AppleVTDecoder::CreateDecoderSpecification() {
+@@ -763,22 +772,24 @@ MediaResult AppleVTDecoder::InitializeSession() {
+                        RESULT_DETAIL("Couldn't create decompression session!"));
+   }
+ 
+-  CFBooleanRef isUsingHW = nullptr;
+-  rv = VTSessionCopyProperty(
+-      mSession,
+-      kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
+-      kCFAllocatorDefault, &isUsingHW);
+-  if (rv == noErr) {
+-    mIsHardwareAccelerated = isUsingHW == kCFBooleanTrue;
+-    LOG("AppleVTDecoder: {} hardware accelerated decoding",
+-        mIsHardwareAccelerated ? "using" : "not using");
+-  } else {
+-    LOG("AppleVTDecoder: maybe hardware accelerated decoding "
+-        "(VTSessionCopyProperty query failed {})",
+-        static_cast<int>(rv));
+-  }
+-  if (isUsingHW) {
+-    CFRelease(isUsingHW);
++  if (__builtin_available(iOS 17.0, *)) {
++    CFBooleanRef isUsingHW = nullptr;
++    rv = VTSessionCopyProperty(
++        mSession,
++        kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
++        kCFAllocatorDefault, &isUsingHW);
++    if (rv == noErr) {
++      mIsHardwareAccelerated = isUsingHW == kCFBooleanTrue;
++      LOG("AppleVTDecoder: {} hardware accelerated decoding",
++          mIsHardwareAccelerated ? "using" : "not using");
++    } else {
++      LOG("AppleVTDecoder: maybe hardware accelerated decoding "
++          "(VTSessionCopyProperty query failed {})",
++          static_cast<int>(rv));
++    }
++    if (isUsingHW) {
++      CFRelease(isUsingHW);
++    }
+   }
+ 
+   return NS_OK;
+@@ -825,6 +836,10 @@ CFDictionaryRef AppleVTDecoder::CreateDecoderExtensions() {
+ }
+ 
  CFDictionaryRef AppleVTDecoder::CreateDecoderSpecification() {
-+#pragma clang diagnostic push
-+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
-+  // The HW spec key is annotated iOS 17+ in the SDK but resolves on
-+  // iOS 12 (a nil key would crash CFDictionaryCreate below, yet sessions
-+  // create fine on device 12.5.8).
++  if (!__builtin_available(iOS 17.0, *)) {
++    return nullptr;
++  }
++
    const void* specKeys[] = {
        kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder};
    const void* specValues[1];
-@@ -881,9 +890,15 @@ CFDictionaryRef AppleVTDecoder::CreateOutputConfiguration() {
+@@ -881,9 +896,15 @@ CFDictionaryRef AppleVTDecoder::CreateOutputConfiguration() {
        std::size(IOSurfaceKeys), &kCFTypeDictionaryKeyCallBacks,
        &kCFTypeDictionaryValueCallBacks));
  

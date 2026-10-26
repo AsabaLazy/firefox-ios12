@@ -53,8 +53,17 @@ func newPromptHandler(_ session: GeckoSession) -> GeckoSessionHandler {
         let delegate = delegate as? PromptDelegate
         switch event {
         case .prompt:
-            guard let promptData = message?["prompt"] as? [String: Any],
-                  let request = parsePromptRequest(promptData) else {
+            guard let promptData = message?["prompt"] as? [String: Any] else {
+                completion(.success(nil))
+                return
+            }
+            guard let request = parsePromptRequest(promptData) else {
+                // Upstream beforeUnload/repost fix (sync, no Concurrency):
+                // a prompt that fails to parse still cancels the reload spinner.
+                let promptType = promptData["type"] as? String
+                if promptType == "beforeUnload" || promptType == "repost" {
+                    session.progressDelegate?.onReloadCancelled(session: session)
+                }
                 completion(.success(nil))
                 return
             }

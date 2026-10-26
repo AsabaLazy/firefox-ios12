@@ -150,14 +150,6 @@ public class GeckoSession {
     }
     public lazy var mediaSession = MediaSession(session: self)
     private lazy var autofillHandler = GeckoAutofillHandler(session: self)
-    private lazy var pictureInPictureHandler = newPictureInPictureHandler(self)
-    public var pictureInPictureDelegate: PictureInPictureDelegate? {
-        get { pictureInPictureHandler.delegate }
-        set { pictureInPictureHandler.delegate = newValue }
-    }
-    public var pictureInPictureDisplayLayer: AVSampleBufferDisplayLayer? {
-        return pictureInPictureHandler.displayLayer
-    }
     
     public func notifyScreenOrientationChanged(to orientation: UIInterfaceOrientation) {
         window?.updateScreenOrientation(orientation.rawValue)
@@ -179,7 +171,6 @@ public class GeckoSession {
         selectionActionHandler,
         mediaSessionHandler,
         autofillHandler,
-        pictureInPictureHandler,
     ]
     
     // MARK: - Lifecycle
@@ -276,7 +267,6 @@ public class GeckoSession {
         selectionActionDelegate = nil
         mediaSessionDelegate?.onDeactivated(session: self)
         mediaSessionDelegate = nil
-        pictureInPictureDelegate = nil
         
         guard let window else {
             return
@@ -341,8 +331,55 @@ public class GeckoSession {
         dispatcher.dispatch(type: "GeckoView:PurgeHistory")
     }
     
+    // MARK: - Full screen
+    
     public func exitFullScreen() {
         dispatcher.dispatch(type: "GeckoViewContent:ExitFullScreen")
+    }
+    
+    // MARK: - Error Pages
+    
+    public var currentLoadError: WebRequestError? {
+        return window?.errorPageURI().flatMap(WebRequestError.init(pageURI:))
+    }
+    
+    public func addCertException(for error: WebRequestError) -> Bool {
+        guard error.kind == .securityBadCertificate,
+              window?.addCertException(pageURI: error.pageURI) == true else {
+            return false
+        }
+        
+        reload()
+        return true
+    }
+    
+    public func reloadWithHttpsOnlyException(for error: WebRequestError) -> Bool {
+        guard error.kind == .httpsOnly else {
+            return false
+        }
+        
+        return window?.reloadWithHttpsOnlyException(pageURI: error.pageURI) == true
+    }
+    
+    // MARK: - Image Loading
+
+    // Upstream Gecko-network image fetch (authenticated images + WebP),
+    // ported to completion style: no Concurrency on iOS 12.
+    public func fetchImageData(from url: URL, completion: @escaping (Data?) -> Void) {
+        guard isOpen() else {
+            completion(nil)
+            return
+        }
+
+        dispatcher.query(type: "GeckoView:FetchImage", message: ["url": url.absoluteString]) { result in
+            guard case .success(let response) = result,
+                  let base64 = response as? String,
+                  let data = Data(base64Encoded: base64) else {
+                completion(nil)
+                return
+            }
+            completion(data)
+        }
     }
     
     // MARK: - Find in Page
@@ -554,6 +591,10 @@ public class GeckoSession {
     }
 
     // Keyboard
+    public func dismissSoftwareKeyboard() {
+        window?.dismissSoftwareKeyboard()
+    }
+
     public func focusedInputMetrics(completion: @escaping ((bottomRatio: CGFloat, caretTop: CGFloat?)?) -> Void) {
         dispatcher.query(type: "GeckoView:GetFocusedInputMetrics") { result in
             guard case .success(let response) = result,
@@ -595,7 +636,19 @@ public class GeckoSession {
         window?.setDynamicToolbarMaxHeight(maxHeight, minHeight: min(max(0, minHeight), maxHeight))
     }
     
-    public func setContentOffsets(top: CGFloat, bottom: CGFloat, topInset: CGFloat, bottomInset: CGFloat) {
-        window?.setContentOffsets(top, bottom: bottom, topInset: topInset, bottomInset: bottomInset)
+    public func setContentOffsets(
+        top: CGFloat,
+        bottom: CGFloat,
+        topInset: CGFloat,
+        bottomInset: CGFloat,
+        contentTranslationY: CGFloat
+    ) {
+        window?.setContentOffsets(
+            top,
+            bottom: bottom,
+            topInset: topInset,
+            bottomInset: bottomInset,
+            contentTranslationY: contentTranslationY
+        )
     }
 }

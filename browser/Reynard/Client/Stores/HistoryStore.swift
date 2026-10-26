@@ -73,7 +73,39 @@ final class HistoryStore {
         }
     }
     
+    // MARK: - Data Import
+    
+    func performHistoryImport(
+        _ operation: @escaping @Sendable () throws -> HistoryImportReport,
+        completion: @escaping (Result<HistoryImportReport, Error>) -> Void
+    ) {
+        stateQueue.async {
+            completion(Result { try operation() })
+        }
+    }
+    
     // MARK: - History
+    
+    func siteCount(completion: @escaping (Int?) -> Void) {
+        stateQueue.async {
+            guard let statement = self.prepareStatementLocked("SELECT COUNT(*) FROM history;") else {
+                completion(nil)
+                return
+            }
+
+            defer {
+                sqlite3_finalize(statement)
+            }
+
+            guard sqlite3_step(statement) == SQLITE_ROW else {
+                completion(nil)
+                return
+            }
+
+            let count = Int(sqlite3_column_int64(statement, 0))
+            completion(count)
+        }
+    }
     
     func currentSnapshot(limit: Int, offset: Int) -> HistoryStoreSnapshot {
         stateQueue.sync {

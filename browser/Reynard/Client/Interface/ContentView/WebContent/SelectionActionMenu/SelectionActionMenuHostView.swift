@@ -9,11 +9,13 @@ import GeckoView
 import UIKit
 
 
-final class SelectionActionMenuHostView: UIView {
+final class SelectionActionMenuHostView: UITextView {
     private weak var session: GeckoSession?
     private var actionId: String?
     private var availableActions = Set<String>()
+    private var menuInteraction: UIInteraction?
     private let onDismissed: (GeckoSession) -> Void
+    private let onFindInPage: (GeckoSession, String) -> Void
     
     override var canBecomeFirstResponder: Bool {
         true
@@ -32,7 +34,7 @@ final class SelectionActionMenuHostView: UIView {
             return availableActions.contains(SelectionActionCommand.selectAll) ? self : nil
         }
         
-        return nil
+        return super.target(forAction: action, withSender: sender)
     }
     
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
@@ -48,7 +50,11 @@ final class SelectionActionMenuHostView: UIView {
             return availableActions.contains(SelectionActionCommand.selectAll)
         }
         
-        return false
+        if action == #selector(findSelectedText(_:)) {
+            return selectedRange.length > 0
+        }
+        
+        return super.canPerformAction(action, withSender: sender)
     }
     
     override func copy(_ sender: Any?) {
@@ -59,11 +65,23 @@ final class SelectionActionMenuHostView: UIView {
         executeAction(SelectionActionCommand.selectAll)
     }
     
+    override func firstRect(for range: UITextRange) -> CGRect {
+        return bounds
+    }
+    
+    override func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
+        return []
+    }
+    
     // MARK: - Lifecycle
     
-    init(onDismissed: @escaping (GeckoSession) -> Void) {
+    init(
+        onDismissed: @escaping (GeckoSession) -> Void,
+        onFindInPage: @escaping (GeckoSession, String) -> Void
+    ) {
         self.onDismissed = onDismissed
-        super.init(frame: .zero)
+        self.onFindInPage = onFindInPage
+        super.init(frame: .zero, textContainer: nil)
         configureAppearance()
     }
     
@@ -75,7 +93,23 @@ final class SelectionActionMenuHostView: UIView {
     
     private func configureAppearance() {
         backgroundColor = .clear
+        textColor = .clear
+        tintColor = .clear
+        isEditable = false
+        isSelectable = true
+        isScrollEnabled = false
         isUserInteractionEnabled = false
+        isAccessibilityElement = false
+        
+        if #available(iOS 16.0, *) {
+            let interaction = UIEditMenuInteraction(delegate: self)
+            addInteraction(interaction)
+            menuInteraction = interaction
+        }
+        
+        if #available(iOS 18.0, *) {
+            writingToolsBehavior = .limited
+        }
     }
     
     // MARK: - Presentation
@@ -85,6 +119,7 @@ final class SelectionActionMenuHostView: UIView {
         session: GeckoSession,
         actionId: String,
         anchorRect: CGRect,
+        selection: String,
         actions: [String]
     ) {
         self.session = session
@@ -100,35 +135,60 @@ final class SelectionActionMenuHostView: UIView {
             frame = anchorRect
         }
         
+        text = selection
+        selectedRange = NSRange(location: 0, length: (selection as NSString).length)
+        
         if !isFirstResponder {
             becomeFirstResponder()
         }
         
-        let menuController = UIMenuController.shared
-        if #available(iOS 13.0, *) {
-            menuController.hideMenu(from: self)
+        if #available(iOS 16.0, *),
+           let interaction = menuInteraction as? UIEditMenuInteraction {
+            let configuration = UIEditMenuConfiguration(
+                identifier: actionId,
+                sourcePoint: CGPoint(x: bounds.midX, y: bounds.midY)
+            )
+            configuration.preferredArrowDirection = .down
+            interaction.presentEditMenu(with: configuration)
         } else {
-            menuController.setMenuVisible(false, animated: false)
-        }
-        menuController.arrowDirection = .down
-        if #available(iOS 13.0, *) {
-            menuController.showMenu(from: self, rect: bounds)
-        } else {
-            menuController.setTargetRect(bounds, in: self)
-            menuController.setMenuVisible(true, animated: true)
+            let selectionView = perform(NSSelectorFromString("selectionView"))?.takeUnretainedValue() as? UIView
+            selectionView?.isHidden = true
+
+            // iOS 12: hideMenu(from:)/showMenu(from:rect:) are iOS 13+ and
+            // raise on 12 — use setMenuVisible/setTargetRect there instead.
+            let menuController = UIMenuController.shared
+            if #available(iOS 13.0, *) {
+                menuController.hideMenu(from: self)
+            } else {
+                menuController.setMenuVisible(false, animated: false)
+            }
+            menuController.arrowDirection = .down
+            if #available(iOS 13.0, *) {
+                menuController.showMenu(from: self, rect: bounds)
+            } else {
+                menuController.setTargetRect(bounds, in: self)
+                menuController.setMenuVisible(true, animated: true)
+            }
         }
     }
     
     func hideMenu() {
         let dismissedSession = actionId == nil ? nil : session
-        if #available(iOS 13.0, *) {
-            if superview != nil {
+        if #available(iOS 16.0, *),
+           let interaction = menuInteraction as? UIEditMenuInteraction {
+            interaction.dismissMenu()
+        } else if superview != nil {
+            if #available(iOS 13.0, *) {
                 UIMenuController.shared.hideMenu(from: self)
             } else {
-                UIMenuController.shared.hideMenu()
+                UIMenuController.shared.setMenuVisible(false, animated: true)
             }
         } else {
-            UIMenuController.shared.setMenuVisible(false, animated: true)
+            if #available(iOS 13.0, *) {
+                UIMenuController.shared.hideMenu()
+            } else {
+                UIMenuController.shared.setMenuVisible(false, animated: true)
+            }
         }
 
         if isFirstResponder {
@@ -150,6 +210,18 @@ final class SelectionActionMenuHostView: UIView {
     
     // MARK: - Actions
     
+    @objc(_findSelected:) private func findSelectedText(_ sender: Any?) {
+        guard let session,
+              let range = selectedTextRange,
+              let selection = text(in: range),
+              !selection.isEmpty else {
+            return
+        }
+        
+        hideMenu()
+        onFindInPage(session, selection)
+    }
+    
     private func executeAction(_ commandId: String) {
         guard let session, let actionId else {
             return
@@ -157,5 +229,15 @@ final class SelectionActionMenuHostView: UIView {
         
         session.executeSelectionAction(actionId: actionId, commandId: commandId)
         hideMenu()
+    }
+}
+
+@available(iOS 16.0, *)
+extension SelectionActionMenuHostView: UIEditMenuInteractionDelegate {
+    func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        targetRectFor configuration: UIEditMenuConfiguration
+    ) -> CGRect {
+        return bounds
     }
 }

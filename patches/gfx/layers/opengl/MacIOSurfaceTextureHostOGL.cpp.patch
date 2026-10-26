@@ -1,16 +1,16 @@
 diff --git a/gfx/layers/opengl/MacIOSurfaceTextureHostOGL.cpp b/gfx/layers/opengl/MacIOSurfaceTextureHostOGL.cpp
-index 84afa8b56871..18c5fb2e6005 100644
+index 7db5eff540f9..e3a86e7fb133 100644
 --- a/gfx/layers/opengl/MacIOSurfaceTextureHostOGL.cpp
 +++ b/gfx/layers/opengl/MacIOSurfaceTextureHostOGL.cpp
 @@ -7,6 +7,7 @@
  #include "mozilla/gfx/MacIOSurface.h"
  #include "mozilla/gfx/gfxVars.h"
- #include "mozilla/layers/GpuFence.h"
+ #include "mozilla/layers/CompositeProcessFencesHolderMap.h"
 +#include "mozilla/layers/IOSurfacePort.h"
  #include "mozilla/webrender/RenderMacIOSurfaceTextureHost.h"
  #include "mozilla/webrender/RenderThread.h"
  #include "mozilla/webrender/WebRenderAPI.h"
-@@ -14,14 +15,29 @@
+@@ -14,15 +15,30 @@
  namespace mozilla {
  namespace layers {
  
@@ -36,16 +36,17 @@ index 84afa8b56871..18c5fb2e6005 100644
  MacIOSurfaceTextureHostOGL::MacIOSurfaceTextureHostOGL(
      TextureFlags aFlags, const SurfaceDescriptorMacIOSurface& aDescriptor)
      : TextureHost(TextureHostType::MacIOSurface, aFlags),
+       mDescriptor(aDescriptor),
 -      mSurface(MacIOSurface::LookupSurface(
 -          aDescriptor.surfaceId(), aDescriptor.yUVColorSpace(),
 -          aDescriptor.transferFunction(),
 -          aDescriptor.isOpaque() ? MacIOSurface::AllowAlpha::No
--                                 : MacIOSurface::AllowAlpha::Yes)),
-+      mSurface(LookupSurface(aDescriptor)),
-       mGpuFence(aDescriptor.gpuFence()) {
+-                                 : MacIOSurface::AllowAlpha::Yes)) {
++      mSurface(LookupSurface(aDescriptor)) {
    MOZ_COUNT_CTOR(MacIOSurfaceTextureHostOGL);
    if (!mSurface) {
-@@ -128,7 +144,12 @@ void MacIOSurfaceTextureHostOGL::PushResourceUpdates(
+     gfxCriticalNote << "Failed to look up MacIOSurface";
+@@ -147,7 +163,12 @@ void MacIOSurfaceTextureHostOGL::PushResourceUpdates(
                      ? &wr::TransactionBuilder::AddExternalImage
                      : &wr::TransactionBuilder::UpdateExternalImage;
    auto imageType = wr::ExternalImageType::TextureHandle(

@@ -41,11 +41,12 @@ final class JITController {
     }
     
     func start() {
-        guard usePtraceJIT() || !isDDIMissing() else {
-            hasHandledFailure = true
-            presentMissingDDIFailureScreen()
-            return
-        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
         
         NotificationCenter.default.addObserver(
             self,
@@ -59,17 +60,17 @@ final class JITController {
             name: .jitEndpointMonitorDidFail,
             object: nil
         )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleApplicationDidBecomeActive),
-            name: UIApplication.didBecomeActiveNotification,
-            object: nil
-        )
 
-        // Experiment (local/jit-main-process-a7): this port is single-process,
-        // so no "tab" child ever arrives via childProcessDidStart. Try the
-        // ptrace helper against the MAIN process itself, before the engine
-        // starts (start() runs pre-GeckoRuntime.main).
+        guard usePtraceJIT() || !isDDIMissing() else {
+            hasHandledFailure = true
+            presentMissingDDIFailureScreen()
+            return
+        }
+
+        // iOS 12 single-process port: no "tab" child ever arrives via
+        // childProcessDidStart for the main process. Try the ptrace helper
+        // against the MAIN process itself, before the engine starts
+        // (start() runs pre-GeckoRuntime.main).
         if #available(iOS 13.0, *) {
             // Upstream multi-process flow: children attach via
             // childProcessDidStart; the main process stays JIT-less.

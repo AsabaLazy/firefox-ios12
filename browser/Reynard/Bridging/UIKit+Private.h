@@ -7,6 +7,20 @@
 
 #import <UIKit/UIKit.h>
 
+typedef struct {
+    UIRectEdge attachment;
+    UIRectEdge alignment;
+    CGFloat attachmentOffset;
+    CGFloat alignmentOffset;
+    NSInteger gravity;
+} ContextMenuAnchor;
+
+API_AVAILABLE(ios(13.0))
+@interface _UIContextMenuStyle : NSObject
++ (nonnull instancetype)defaultStyle;
+@property(nonatomic) ContextMenuAnchor _preferredAnchor;
+@end
+
 @interface UIMenuElement (ReaderSettings)
 @property(nonatomic, copy) NSAttributedString *attributedTitle;
 @end

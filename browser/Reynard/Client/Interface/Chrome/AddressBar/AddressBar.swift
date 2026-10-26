@@ -47,6 +47,10 @@ final class AddressBar: UIView {
         static let addressBarBackgroundShadowRadius: CGFloat = 14
         static let addressBarBackgroundShadowOffset = CGSize(width: 0, height: 2)
         static let borderWidth: CGFloat = 0.5
+        static let keyCommandHintDuration: TimeInterval = 3
+        static let keyCommandHintAnimationDuration: TimeInterval = 0.3
+        static let keyCommandHintIconSize = CGSize(width: 18, height: 13)
+        static let keyCommandHintIconOffset: CGFloat = -1
     }
     
     enum EditingState: Equatable {
@@ -76,7 +80,7 @@ final class AddressBar: UIView {
         case hidden
         case search
         case menu
-        case loading
+        case disabled
     }
     
     private enum TrailingButtonState: Equatable {
@@ -109,6 +113,7 @@ final class AddressBar: UIView {
     private weak var searchDelegate: AddressBarSearchDelegate?
     
     private var editingState: EditingState = .inactive
+    private var usesAutomaticFocusLayout = false
     private var loadingState: LoadingState = .idle
     private var position: BrowserChromePosition = .bottom
     private var chromeMode: BrowserChromeMode = .phone
@@ -121,10 +126,12 @@ final class AddressBar: UIView {
     private var currentLocationText: String?
     private var currentLocationTitle: String?
     private var canShowBarMenu = false
-
     // Cached so rendering doesn't hit CFPreferences on every applyState() (which
     // fires many times during a page load). Refreshed on the change notification.
     private var showsFullWebsiteAddress = Prefs.AppearanceSettings.showsFullWebsiteAddress
+    private var isErrorPage = false
+    private var keyCommandHint: NSAttributedString?
+    private var keyCommandHintTimer: Timer?
     
     private var preserveAutocompleteAfterResign = false
     // NOTE: iOS 12 backport — type-erased to Any? because UIMenu is iOS 13+
@@ -313,6 +320,7 @@ final class AddressBar: UIView {
     }
     
     deinit {
+        keyCommandHintTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
     
@@ -393,12 +401,14 @@ final class AddressBar: UIView {
         _ text: String?,
         locationText: String? = nil,
         locationTitle: String? = nil,
-        showsBarMenu: Bool = false
+        showsBarMenu: Bool = false,
+        isErrorPage: Bool = false
     ) {
         currentText = text?.trimmingCharacters(in: .whitespacesAndNewlines)
         currentLocationText = locationText?.trimmingCharacters(in: .whitespacesAndNewlines)
         currentLocationTitle = locationTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         canShowBarMenu = showsBarMenu
+        self.isErrorPage = isErrorPage
         guard editingState == .inactive else {
             applyState()
             return
@@ -484,26 +494,52 @@ final class AddressBar: UIView {
     }
     
     func setDismissButtonVisible(_ visible: Bool, animated: Bool) {
-        backgroundTrailingFullConstraint.isActive = !visible
-        backgroundTrailingFocusedConstraint.isActive = visible
-        if visible {
+        let showsDismissButton = visible && !usesAutomaticFocusLayout
+        
+        backgroundTrailingFocusedConstraint.isActive = false
+        backgroundTrailingFullConstraint.isActive = !showsDismissButton
+        backgroundTrailingFocusedConstraint.isActive = showsDismissButton
+        
+        if showsDismissButton {
             dismissButton.isHidden = false
         }
+        
         let animations = {
-            self.dismissButton.alpha = visible ? 1 : 0
+            self.dismissButton.alpha = showsDismissButton ? 1 : 0
             self.layoutIfNeeded()
         }
         let completion: (Bool) -> Void = { _ in
-            if !visible {
+            if !self.backgroundTrailingFocusedConstraint.isActive {
                 self.dismissButton.isHidden = true
             }
         }
+        
         if animated {
             UIView.animate(withDuration: UX.addressBarDismissButtonAnimationDuration, animations: animations, completion: completion)
         } else {
             animations()
             completion(true)
         }
+    }
+    
+    // MARK: - Keyboard Focus
+    
+    func focusForHardwareKeyboard() {
+        usesAutomaticFocusLayout = true
+        if textField.becomeFirstResponder() {
+            setDismissButtonVisible(false, animated: true)
+        } else {
+            usesAutomaticFocusLayout = false
+        }
+    }
+    
+    func restoreEditingLayout() {
+        guard usesAutomaticFocusLayout else {
+            return
+        }
+        
+        usesAutomaticFocusLayout = false
+        setDismissButtonVisible(textField.isFirstResponder, animated: true)
     }
     
     // MARK: - Text And Autocomplete
@@ -784,6 +820,10 @@ final class AddressBar: UIView {
             return typedText.isEmpty ? .placeholder : .typedText
         }
         
+        if let keyCommandHint {
+            return .page(keyCommandHint)
+        }
+        
         guard let displayText = displayAttributedText() else {
             return .placeholder
         }
@@ -792,8 +832,9 @@ final class AddressBar: UIView {
     
     private func resolveLeadingButtonState(for content: ContentState) -> LeadingButtonState {
         guard editingState == .inactive else { return .hidden }
+        if isErrorPage { return .disabled }
         if isReaderActive { return .menu }
-        if case .loading = loadingState { return .loading }
+        if case .loading = loadingState { return .disabled }
         switch content {
         case .placeholder:
             return chromeMode == .phone && position == .bottom ? .search : .hidden
@@ -876,6 +917,7 @@ final class AddressBar: UIView {
     }
     
     private func applyLeadingButtonState(_ state: LeadingButtonState) {
+        leadingButton.isEnabled = state != .disabled
         guard state != .hidden else {
             leadingButton.isHidden = true
             leadingButton.setImage(nil, for: .normal)
@@ -896,8 +938,7 @@ final class AddressBar: UIView {
             leadingButton.isUserInteractionEnabled = false
             return
         }
-
-        if state == .loading {
+        if state == .disabled {
             leadingButton.tintColor = .appSecondaryLabel
             leadingButton.setImage(UIImage(named: "reynard.list.bullet.below.rectangle"), for: .normal)
             if #available(iOS 13.0, *) {
@@ -993,6 +1034,74 @@ final class AddressBar: UIView {
         addressLabel.alpha = hidden ? 0 : 1
     }
     
+    func showKeyCommandHint(_ command: UIKeyCommand) {
+        guard editingState == .inactive else {
+            return
+        }
+
+        // command.title is iOS 13+. The hint only fires from the iOS 13+
+        // menu-shortcut flow, so no-op below that.
+        guard #available(iOS 13.0, *) else {
+            return
+        }
+        
+        var shortcut = ""
+        for (modifier, symbol) in [
+            (UIKeyModifierFlags.control, "⌃"), (.alternate, "⌥"),
+            (.shift, "⇧"), (.command, "⌘"),
+        ] where command.modifierFlags.contains(modifier) {
+            shortcut += symbol
+        }
+        shortcut += command.input == "\t" ? "⇥" : command.input?.uppercased() ?? ""
+        
+        let attachment = NSTextAttachment()
+        attachment.image = UIImage(named: "reynard.keyboard")?.withTintColor(.secondaryLabel)
+        attachment.bounds = CGRect(
+            origin: CGPoint(x: 0, y: UX.keyCommandHintIconOffset),
+            size: UX.keyCommandHintIconSize
+        )
+        let hint = NSMutableAttributedString(
+            attributedString: NSAttributedString(attachment: attachment)
+        )
+        hint.append(NSAttributedString(
+            string: " " + String(
+                format: NSLocalizedString("%@ again to %@…", comment: "Shortcut hint displayed in the address bar"),
+                shortcut,
+                command.title
+            ),
+            attributes: [.foregroundColor: UIColor.secondaryLabel]
+        ))
+        keyCommandHintTimer?.invalidate()
+        let timer = Timer(timeInterval: UX.keyCommandHintDuration, repeats: false) { [weak self] _ in
+            self?.clearKeyCommandHint()
+        }
+        keyCommandHintTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        setKeyCommandHint(hint)
+    }
+    
+    func clearKeyCommandHint() {
+        keyCommandHintTimer?.invalidate()
+        keyCommandHintTimer = nil
+        guard keyCommandHint != nil else {
+            return
+        }
+        
+        setKeyCommandHint(nil)
+    }
+    
+    private func setKeyCommandHint(_ hint: NSAttributedString?) {
+        keyCommandHint = hint
+        UIView.transition(
+            with: addressLabel,
+            duration: UX.keyCommandHintAnimationDuration,
+            options: [.transitionCrossDissolve, .beginFromCurrentState],
+            animations: {
+                self.applyState()
+            }
+        )
+    }
+    
     private func displayAttributedText() -> NSAttributedString? {
         guard let currentText, !currentText.isEmpty else {
             return nil
@@ -1052,6 +1161,8 @@ final class AddressBar: UIView {
     
     @objc
     private func handleBarTap() {
+        restoreEditingLayout()
+        
         if textField.isFirstResponder {
             if isShowingOverlay {
                 handleOverlayTap()
@@ -1252,6 +1363,11 @@ final class AddressBar: UIView {
     
     private func updateAutocompletePresentation() {
         textField.isAutocompleteActive = isShowingOverlay
+        if case .focusPreview = autocompleteState {
+            textField.isFocusPreviewActive = true
+        } else {
+            textField.isFocusPreviewActive = false
+        }
         textField.textColor = isShowingOverlay ? .clear : .appLabel
         textField.tintColor = isShowingOverlay ? .clear : tintColor
         autocompleteButton.isHidden = !isShowingOverlay
@@ -1426,6 +1542,8 @@ extension AddressBar: UITextFieldDelegate {
         shouldChangeCharactersIn range: NSRange,
         replacementString string: String
     ) -> Bool {
+        restoreEditingLayout()
+        
         if case .focusPreview = autocompleteState {
             clearFocusPreview()
             let previousText = lastEditingText
@@ -1482,6 +1600,7 @@ extension AddressBar: UITextFieldDelegate {
     }
     
     func textFieldDidBeginEditing(_ textField: UITextField) {
+        clearKeyCommandHint()
         editingState = .focused
         if let currentText,
            !currentText.isEmpty {
@@ -1503,6 +1622,8 @@ extension AddressBar: UITextFieldDelegate {
     }
     
     func textFieldDidEndEditing(_ textField: UITextField) {
+        usesAutomaticFocusLayout = false
+        
         if editingState != .composing {
             editingState = .inactive
         }
@@ -1537,6 +1658,7 @@ extension AddressBar: UIGestureRecognizerDelegate {
         }
         
         if touch.view?.isDescendant(of: textField) == true {
+            restoreEditingLayout()
             return false
         }
         

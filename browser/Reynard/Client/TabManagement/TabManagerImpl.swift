@@ -7,6 +7,7 @@
 
 import Foundation
 import GeckoView
+import Network
 import UIKit
 
 final class TabManagerImplementation: NSObject, TabManager {
@@ -40,7 +41,13 @@ final class TabManagerImplementation: NSObject, TabManager {
         return self.tabs(for: location.mode)[location.index].title
     }
     private lazy var selectionActionCoordinator = SelectionActionCoordinator(
-        presenter: SelectionActionPresenter(onMenuDismissed: requestContentKeyboardFocus)
+        presenter: SelectionActionPresenter(
+            onMenuDismissed: requestContentKeyboardFocus,
+            onFindInPage: { [weak self] session, query in
+                guard let self else { return }
+                self.delegate?.tabManager(self, didRequestFindInPage: query, in: session)
+            }
+        )
     )
     private lazy var permissionCoordinator = PermissionCoordinator(
         promptPresenter: PermissionPromptPresenter(),
@@ -48,17 +55,6 @@ final class TabManagerImplementation: NSObject, TabManager {
     )
     private(set) lazy var readerMode = ReaderModeController(delegate: self)
     private lazy var systemMediaSession = SystemMediaSession(playbackObserver: self)
-    private lazy var pictureInPictureCoordinator: PictureInPictureCoordinating? = {
-        guard Prefs.ExperimentalSettings.isVideoPictureInPictureEnabled,
-              #available(iOS 15.0, *) else {
-            return nil
-        }
-        return PictureInPictureCoordinator(
-            delegate: self,
-            mediaSession: systemMediaSession,
-            sessionManager: sessionManager
-        )
-    }()
     
     private weak var delegate: TabManagerDelegate?
     private let store: TabManagementStore
@@ -66,11 +62,8 @@ final class TabManagerImplementation: NSObject, TabManager {
     private let historyStore: HistoryStore
     let sessionManager: SessionManager
     private var faviconRequests: [UUID: UUID] = [:]
+    private let networkMonitor = NWPathMonitor()
     private var selectionCounter = 0
-    
-    // A background termination may be reported after the app becomes active.
-    // Keep the session eligible for silent recovery until a foreground composite confirms it survived.
-    private weak var sessionEligibleForSilentRecovery: GeckoSession?
     
     private lazy var lenientURLExpression: NSRegularExpression = {
         let pattern = "^\\s*(\\w+-+)*[\\w\\[]+(://[/]*|:|\\.)(\\w+-+)*[\\w\\[:]+([\\S&&[^\\w-]]\\S*)?\\s*$"
@@ -90,13 +83,15 @@ final class TabManagerImplementation: NSObject, TabManager {
         self.faviconStore = faviconStore
         self.historyStore = historyStore
         super.init()
+        
+        networkMonitor.start(queue: .global(qos: .utility))
+    }
+    
+    deinit {
+        networkMonitor.cancel()
     }
     
     // MARK: - Application Lifecycle
-    
-    func applicationWillResignActive() {
-        sessionEligibleForSilentRecovery = selectedTab?.session
-    }
     
     func applicationDidBecomeActive() {
         guard selectedTab?.session.isOpen() == false else {
@@ -184,6 +179,7 @@ final class TabManagerImplementation: NSObject, TabManager {
     // MARK: - Navigation State
     
     private func loadURL(_ url: String, in tab: Tab) {
+        tab.state.loadError = nil
         tab.state.restoreState = .none
         tab.state.showsStartupHomepage = false
         tab.state.loadingState = .loading(progress: 0)
@@ -588,18 +584,12 @@ final class TabManagerImplementation: NSObject, TabManager {
         )
     }
     
-    private func handleSessionTermination(_ session: GeckoSession) {
+    private func handleSessionTermination(_ session: GeckoSession, recoverAutomatically: Bool) {
         DownloadStore.shared.failCapturedDownloads(for: session)
         sessionManager.clearExternalResponseRetention(for: session)
         
         guard let location = tabLocation(for: session) else {
             return
-        }
-        
-        let wasAwaitingForegroundComposite =
-        sessionEligibleForSilentRecovery === session
-        if wasAwaitingForegroundComposite {
-            sessionEligibleForSilentRecovery = nil
         }
         
         let didTerminateSelectedTab = selectedTab?.session === session
@@ -612,6 +602,8 @@ final class TabManagerImplementation: NSObject, TabManager {
         sessionManager.close(session)
         prepareRestoration(for: tab)
         tab.state.loadingState = .idle
+        tab.state.loadError = WebRequestError(kind: .contentCrashed, uri: displayedURL(for: tab))
+        notifyUpdate(at: location.index, mode: location.mode, reason: .loadError)
         notifyUpdate(at: location.index, mode: location.mode, reason: .loading)
         persistState()
         
@@ -620,7 +612,7 @@ final class TabManagerImplementation: NSObject, TabManager {
             return
         }
         
-        if wasAwaitingForegroundComposite {
+        if recoverAutomatically {
             selectTab(at: location.index, mode: location.mode)
         } else {
             delegate?.tabManagerDidTerminateSelectedTab(self)
@@ -796,7 +788,6 @@ final class TabManagerImplementation: NSObject, TabManager {
         sessionManager.activate(selectedTab.session)
         selectedTab.session.mediaSession.muteAudio(selectedTab.isMuted)
         systemMediaSession.select(session: selectedTab.session)
-        pictureInPictureCoordinator?.selectedSessionDidChange()
         applyNavigationState(to: selectedTab)
         
         delegate?.tabManager(self, didSelectTabAt: index, previousIndex: previousIndex)
@@ -968,7 +959,7 @@ final class TabManagerImplementation: NSObject, TabManager {
         let shouldNavigateDirectly = lenientURLExpression.firstMatch(in: navigationInput, range: navigationInputRange) != nil
         
         if shouldNavigateDirectly {
-            loadURL(navigationInput, in: tab)
+            loadURL(URLUtils.fixTLDTypo(in: navigationInput), in: tab)
             return
         }
         
@@ -1145,7 +1136,6 @@ final class TabManagerImplementation: NSObject, TabManager {
         sessionManager.activate(session)
         session.mediaSession.muteAudio(tab.isMuted)
         systemMediaSession.select(session: session)
-        pictureInPictureCoordinator?.selectedSessionDidChange()
         
         delegate?.tabManagerDidChangeTabs(self)
         delegate?.tabManager(self, didReplaceSelectedSession: oldSession, with: session)
@@ -1281,7 +1271,6 @@ extension TabManagerImplementation: SystemMediaSessionPlaybackObserver {
                 notifyUpdate(at: location.index, mode: location.mode, reason: .audio)
             }
         }
-        delegate?.tabManager(self, didChangeMediaPlayback: playbackState == .playing, for: session)
     }
 }
 
@@ -1355,14 +1344,9 @@ extension TabManagerImplementation: ContentDelegate {
             return
         }
         
-        let mediaIsPlaying = systemMediaSession.selectedSnapshot.map {
-            $0.session === session && $0.playbackState == .playing
-        } ?? false
-        
         delegate?.tabManager(
             self,
             didChangeFullscreen: fullScreen,
-            mediaIsPlaying: mediaIsPlaying,
             for: session
         )
     }
@@ -1386,21 +1370,14 @@ extension TabManagerImplementation: ContentDelegate {
     }
     
     func onCrash(session: GeckoSession) {
-        handleSessionTermination(session)
+        handleSessionTermination(session, recoverAutomatically: false)
     }
     
     func onKill(session: GeckoSession) {
-        handleSessionTermination(session)
+        handleSessionTermination(session, recoverAutomatically: true)
     }
     
-    func onFirstComposite(session: GeckoSession) {
-        guard sessionManager.isApplicationActive,
-              sessionEligibleForSilentRecovery === session else {
-            return
-        }
-        
-        sessionEligibleForSilentRecovery = nil
-    }
+    func onFirstComposite(session: GeckoSession) {}
     
     func onFirstContentfulPaint(session: GeckoSession) {}
     
@@ -1503,6 +1480,24 @@ extension TabManagerImplementation: NavigationDelegate {
             return
         }
         let tab = tabs(for: location.mode)[location.index]
+        
+        if let error = session.currentLoadError {
+            if error != tab.state.loadError {
+                _ = onLoadError(session: session, error: error)
+            }
+            scheduleHistoryNavigationCompletion(in: tab)
+            return
+        }
+        
+        if url == tab.state.loadError?.pageURI {
+            return
+        }
+        
+        if let error = tab.state.loadError, url != error.uri {
+            tab.state.loadError = nil
+            notifyUpdate(at: location.index, mode: location.mode, reason: .loadError)
+        }
+        
         let url = url.map { readerMode.displayedURL(for: $0, in: tab) }
         
         let normalizedURL = url?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1597,6 +1592,30 @@ extension TabManagerImplementation: NavigationDelegate {
     func onSubframeLoadRequest(session: GeckoSession, request: LoadRequest, completion: @escaping (AllowOrDeny) -> Void) {
         completion(.allow)
     }
+    func onLoadError(session: GeckoSession, error: WebRequestError) -> String? {
+        guard let location = tabLocation(for: session) else {
+            return nil
+        }
+
+        let tab = tabs(for: location.mode)[location.index]
+        var error = error
+        if error.kind == .unknownHost, networkMonitor.currentPath.status != .satisfied {
+            error.kind = .noInternet
+        }
+
+        tab.state.loadError = error
+        tab.state.loadingState = .idle
+        tab.state.showsStartupHomepage = false
+
+        if let uri = error.uri, !uri.isEmpty {
+            tab.url = uri
+            tab.state.displayState = .committed
+        }
+
+        notifyUpdate(at: location.index, mode: location.mode, reason: .loadError)
+        notifyUpdate(at: location.index, mode: location.mode, reason: .loading)
+        return error.pageURI
+    }
 
     func onNewSession(session: GeckoSession, uri: String, windowId: String, target: LoadRequestTarget, completion: @escaping (GeckoSession?) -> Void) {
         let sourceLocation = tabLocation(for: session)
@@ -1660,20 +1679,6 @@ extension TabManagerImplementation: NavigationDelegate {
     }
 }
 
-@available(iOS 15.0, *)
-extension TabManagerImplementation: PictureInPictureCoordinatorDelegate {
-    func pictureInPictureCoordinator(
-        _ coordinator: PictureInPictureCoordinator,
-        restore session: GeckoSession
-    ) -> Bool {
-        guard let location = tabLocation(for: session) else {
-            return false
-        }
-        selectTab(at: location.index, mode: location.mode)
-        return true
-    }
-}
-
 extension TabManagerImplementation: HistoryDelegate {
     func onVisited(
         session: GeckoSession,
@@ -1722,11 +1727,15 @@ extension TabManagerImplementation: ProgressDelegate {
     }
     
     func onPageStart(session: GeckoSession, url: String) {
-        pictureInPictureCoordinator?.navigationStarted(in: session)
         guard let location = tabLocation(for: session) else {
             return
         }
         let tab = tabs(for: location.mode)[location.index]
+        
+        if url == tab.state.loadError?.pageURI {
+            return
+        }
+        
         systemMediaSession.navigationStarted(
             in: session,
             preservingPlayback: tab.isMuted && tab.state.isPlayingAudio && tab.url == url
@@ -1736,6 +1745,11 @@ extension TabManagerImplementation: ProgressDelegate {
            hasDisplayURL(for: tab) {
             tab.state.isSuppressingInitialBlankPageLoad = true
             return
+        }
+        
+        if tab.state.loadError != nil {
+            tab.state.loadError = nil
+            notifyUpdate(at: location.index, mode: location.mode, reason: .loadError)
         }
         
         sessionManager.trackingProtection.clearBlockedTrackers(for: session)
@@ -1758,6 +1772,10 @@ extension TabManagerImplementation: ProgressDelegate {
         }
         let tab = tabs(for: location.mode)[location.index]
         
+        if let error = session.currentLoadError, error != tab.state.loadError {
+            _ = onLoadError(session: session, error: error)
+        }
+        
         if tab.state.isSuppressingInitialBlankPageLoad {
             tab.state.isSuppressingInitialBlankPageLoad = false
             return
@@ -1766,6 +1784,10 @@ extension TabManagerImplementation: ProgressDelegate {
         tab.state.loadingState = .idle
         notifyUpdate(at: location.index, mode: location.mode, reason: .loading)
         notifyUpdate(at: location.index, mode: location.mode, reason: .thumbnail)
+        delegate?.tabManager(self, didFinishLoading: session)
+    }
+    
+    func onReloadCancelled(session: GeckoSession) {
         delegate?.tabManager(self, didFinishLoading: session)
     }
     

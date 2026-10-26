@@ -298,3 +298,250 @@
   `libswift_Concurrency`。jemalloc 包 `libmozglue.dylib` 含 `<jemalloc>`/`MALLOC_OPTIONS`/
   `jemalloc_stats_*`，nojemalloc 包这些全无（只剩转发系统 malloc 的 `moz_arena_*`），两包
   确实不同（IPA 132729412 vs 132673324 字节）。真机装机待测。
+
+
+## 上游合并实录（分支 `merge/upstream-0.19.0`，上游 a3315eb→24a99b7 共 73 提交：0.19.0）
+
+- 范围：0.16.0→0.19.0 四个小版本、引擎 156.0.1→**158.0.1**（157/157.0.1/158/158.0.1
+  四连跳，submodule 19a9005→9378fbc）、App 侧全面 async 化（Prompt/Navigation/
+  GeckoSession/History/Bookmark/UniversalLink 全改 `async + @MainActor`）。
+  `git merge-tree` 预演 60 个双方都动的文件：31 冲突 + 29 自动合并；实际解决
+  34 个（含 2 个 modify/delete 与 2 个 both-added patch）。
+- App 侧解法（iOS 12 优先，一律 completion 回 port、零 Concurrency）：
+  xcconfig 取 0.19.0 保 12.0+clang_rt；Helper 取 DispatchQueue 版；JITController
+  合体（上游 DDI 守卫 + 我方主进程 ptrace 同步块 + bundle id 保留）；
+  ApplicationMenuBuilder 取新 commands 结构 + 保包名前缀；Navigation/Prompt/
+  GeckoSession/AddonCoordinator/TabManagerImpl 保 completion 签名、上游 sync
+  新功能（onLoadError 错误页、`dismissSoftwareKeyboard`、import hook）原样收进；
+  AddressBar 合并 error-state 重构 + keyCommandHint（13 门内）；
+  WebContentView 合并 contentContainerView + errorView，下缩略图保留 672px 上限
+  （layer.render 改渲 container）；SelectionActionMenuHostView 取 UITextView 基类
+  +UIEditMenu（16 门）+UIMenuController iOS 12 回退；ContextMenu 取 MenuInteraction
+  子类（13 门实例化）+ImagePreviewLoader 改走 Gecko 取图（completion 化）；
+  FavoriteFolder 兼容 blur（12 回退无特效）+cornerCurve shim；`remove PiP`
+  接受上游删除（delegate/coordinator/引擎 patch 全删）。
+- 引擎侧解法（pristine sparse-checkout 重建，详见本轮新增校验）：
+  mobile.js/ProcExecMem/IOSBootstrap/ScreenHelper/nsDocShell/nsHttpHandler/
+  VTDecoder/device_info 全过 `apply --check`（158.0.1 pristine）；
+  NativeLayerCA/VTEncoder/TextInput/nsWindow/GeckoEditableSupport(.h/.mm)/
+  GeckoTouchSupport 走 scratch 重建（上游 patch + 移植 iOS 12 hunks 再重生成）。
+  要点：JIT 容量重构（2044MiB→1024MiB fallback）保留，但 XP_IOS 改走 **140MB
+  直接预留**（A7 实测 512 OK/1GB ENOMEM，Ion 稳态靠它）+ EINVAL-hint 重试保留；
+  VTEncoder 上游的版本门禁会禁掉 iOS 12 全路径，改回 nil-safe 弱链接检查；
+  TextInput/Editable/GeckoTouch 上游 157/158 已删源文件改走自有重写，
+  caret 菜单旧 hack 整体退役（新架构自带），interactionAssistant（15+）集中
+  `reynard_interactionAssistantOrNil` 守卫（22 处，nil 消息安全已逐点核对），
+  文本菜单 show/hideMenuFromView 加 13 回退，setupTextInput 加
+  textInteractionForMode 守卫；nsWindow 仅 nil-guard + DismissSoftwareKeyboard
+  保留，其余（SafeArea/Passwords/Autofill/RetainedLayer/NativeTextInput 管线）
+  均已被上游吸收。
+- DataManagement import/export 整套（35 新文件）`async→completion` 回 port：
+  UserDataCancellation 加自有取消 error；store 层改 completion；importer/
+  exporter/exporter-alert 全改 GCD + cancellation 透传（UserDataImporter/
+  Exporter 递归链、AddonImporter 分步恢复链、Catalog 分页抓取链）；
+  校验页 WebContentErrorView、keyCommandHint、Import/Export UI 全套 UICompat
+  shim（label/systemBackground/separator/medium/insetGrouped/tertiaryLabel/
+  QLThumbnail→占位图标/shouldShowFileExtensions 门）。
+- `check-ios12.sh` 本轮改动（已落仓库）：ZIPFoundation 0.9.20 按 tag 抓取并预编
+  swiftmodule（`-I` 传给 Reynard target，min iOS 9 可编）；WebRequestErrorBridge.mm
+  因需 objdir 生成头（nsError.h）加入 skip（同 GeckoRuntimeBridge.mm 惯例）；
+  另：15 个上游新 symbolset 已转 imageset（`generate-ios12-icons.py`，0 残留）。
+- 校验：`check-ios12.sh <merge-base>` 从 261 error 修到 **result: PASS**
+  （4 target 零错误、无 Concurrency 引用、ObjC 零 unguarded、资源全对上）。
+  注意：engine patch 的 availdb 扫描在合并提交前 diff 的是旧 HEAD，
+  44 条候选多为误报/已守卫；真正的可用性守卫已在重建时逐项确认（见上）。
+- 待后续（进 main 前）：分支 dispatch **nojemalloc** 只跑编译检查；
+  真机装机（bench RUNS + otool minos + RSS）结论回填到此。
+
+- **0.19.0 发版前扫描复核（check-ios12.sh PASS 后）**：engine 扫描 184 候选逐条定性——
+  新增真风险仅两处，已修：`nsIOSSystemProxySettings.mm` 的
+  `+[NSURLComponents componentsWithString:]`（iOS 16+，每次代理查询都走，已加
+  13/16 双分支回退到 URL 解析）；`GeolocationSystemUIKit.mm` 的
+  `UISceneDidActivateNotification` 观察者（12 上为 nil 会订阅全部通知，已加
+  13 门，12 回到旧行为）。其余皆误报或已有守卫：VTEncoder 系列 key 全走
+  pragma+nil-check（12 可用即用）；NativeLayerCA（IsCGColor/CreateCGColor/
+  CVBuffer/preventsCapture）全在 `@available`/`__builtin_available` 内；
+  Editable 新文件 interactionAssistant 收敛到 `reynard_interactionAssistantOrNil`
+  （22 处，nil 消息安全已逐点核对），菜单 show/hide 加 13 回退，setupTextInput
+  加 textInteractionForMode 守卫；nsAppShell/scene、device_info、Touch、字体两处
+  均为既有守卫模式；cubeb/PointerSupport/permission 均为旧 API 文本误报。
+- **2026-10-26 本地 Gecko 编复现 0918 静默截断坑**：`fca7136c` 给
+  `nsIOSSystemProxySettings.mm.patch` 加 13/16 双分支时 hunk 头写 `+1,179`，
+  实际正文 180 行（`tail -n +7 patch | grep -c '^+'` 减 `+++` 行），尾部 `}`
+  被 `git apply` 静默丢掉，工作树 179 行，`mach build` 34 分钟后才在
+  `nsIOSSystemProxySettings.mm:179` 报 `expected '}'`。修：头改 `+1,180` +
+  工作树补 `}`，`tail -n +7 patch | sed 's/^+//' | diff - 工作树` 逐字节一致。
+  教训：new-file patch 改完必须数 `+` 行数核对头 + 产物对比，`--check` 不报错
+  不代表打全（见 0918 节）。同提交的 `GeolocationSystemUIKit.mm.patch`
+  头 `+1,232` 与正文 232 一致，无碍。另：本机编需把 Xcode 26.5 工具链放
+  `PATH` 前盖掉 Homebrew llvm 23（否则 target linker 检查挂），`python3`
+  用 3.14 shim（3.15 的 zstandard 编不过，Mach 明确建议 ≤3.14）。
+- **同日续编又爆 `GeckoEditableSupport.h: duplicate member`**：0.19.0 合并时
+  scratch 重建的整文件 patch 把 `mPendingSelectionGeometryRefresh` /
+  `mSelectionHandleSuppressionAssertion` 收了两遍（`struct GeckoEditableState`
+  里各出现两次），`mEditable = {}` 的 2 个 error 是连带（类型本身非法，
+  隐式赋值运算符直接不可用）。修：以后一块（158 新增状态区）里删掉重复两行，
+  保留 `mPendingKeyboardContextUpdate/mSelectionActivated/mAsyncScrollInProgress/
+  mPreparingBackwardDeletionSelection/mSelectionAffinity`，头 `+1,178`→`+1,176`，
+  工作树同步删并逐字节对过。教训：整文件重建 patch 入库前必须把成员名
+  `sort | uniq -d` 过一遍，编译器要到 34 分钟后才报，贵。
+- **同日 archive 首挂：`-xcconfig` 把桥接头漏进 SPM 包**：0.19.0 上游引入
+  ZIPFoundation（SwiftPM）后第一次真 archive，卡在
+  `Build input file cannot be found: '.../checkouts/ZIPFoundation/Reynard/
+  Bridging/Reynard-Bridging-Header.h' (in target 'ZIPFoundation')`。
+  根因：`build-app.sh` 传的 `-xcconfig dist/Reynard.xcconfig` 对全工程所有
+  target 生效（含 SPM 包），而 `Reynard.xcconfig` 里的
+  `SWIFT_OBJC_BRIDGING_HEADER` 一行对自有 target 全系冗余（6 处 target 级已设
+  同值，OpenIn 设空）——它唯一的作用就是污染包 target（包的 SRCROOT 下无此文件）。
+  修：从 xcconfig 删掉该行（自有 target 走 target 级，行为零变化；
+  `OTHER_LDFLAGS` 等 `-I/-L` 泄漏对静态包无害，留着不动）。
+  `check-ios12.sh` 不读 xcconfig（显式传 `-import-objc-header`），重跑仍 PASS。
+- **同日真机首启动 dyld 崩：`_OBJC_CLASS_$__UIContextMenuStyle` 找不到**：
+  0.19.0 包（戳 2372347）装上 iPhone 5s 点开即 `EXC_CRASH (SIGABRT)`，
+  `Termination Description: DYLD, Symbol not found: _OBJC_CLASS_$__UIContextMenuStyle,
+  Referenced from: Reynard, Expected in: UIKit`。根因：上游新增
+  `UIKit+Private.h` 前向声明私有类 `_UIContextMenuStyle`（13+）时没写
+  `API_AVAILABLE`，Swift 侧虽在 `@available(iOS 13.0,*)` 扩展里用
+  （`ContextMenuCoordinator.styleForMenuWithConfiguration`），编译器仍按
+  "全版本可用" 强链接该类符号，12 上 dyld 启动即杀。修：声明处加
+  `API_AVAILABLE(ios(13.0))`（同文件 `UISheetPresentationControllerDetent`
+  15.0 注解的既有写法），用点已在 13 门内，弱链接后 12 直接无此符号引用。
+  教训：**`check-ios12.sh` 只编出 `.o` 不链接，强链接类 bug congenitally
+  漏网**——今后合并凡见桥接头新增前向声明（`@interface _UI…` 私有类），必须
+  逐个补 `API_AVAILABLE` 并真机冷启验证，不能只信 PASS。另：`UIMenuElement
+  (ReaderSettings)` 分类是自有代码编进包，运行时动态派发 + 调用点已有
+  `responds(to:)` 守卫，无碍，不动。
+- **同日真机冷启 30~60 秒后主线程 100% 空转：`reynard_interactionAssistantOrNil`
+  自递归**：0.19.0 合并 scratch 重建的 `GeckoEditableSupport.mm` 里，新 helper
+  把 `return [self interactionAssistant]` 写成了 `return [self
+  reynard_interactionAssistantOrNil]`（同名只差前缀，review 时逐点核对 22 个
+  调用点却没看方法本身两行）。`interactionAssistant` 是 157/158 上游自有重写
+  （GeckoTextInteractionAssistant），不再是苹果 15+ API——12 上
+  `respondsToSelector` 恒真，于是无条件自递归；且是尾调用，clang 编成 JUMP，
+  spindump 里就是扁平一帧（`reynard_interactionAssistantOrNil +32/+44`，500/500
+  采样，0.25c/i 的 objc 收发风暴），看起来像"runloop 回调里转圈"而不是递归，
+  极易误判。定位链：`spindump <pid>`（机上自带，比 lldb 轻）→ 主线程
+  `nsAppShell::Run` 下唯一 XUL 帧 → `atos -o dist/bin/XUL -arch arm64 -l
+  <机上基址>`（UUID 对上就能解，Release 包未全 strip）。触发延迟是因为首次
+  调用要等文本系统初始化（约冷启后 30~60 秒；地址栏 setText 会提前引爆）。
+  此前"setText 长 URL 卡死"的结论更正：不是字符串内容问题，是第二次 setText
+  时恰好撞上 helper 已开始转（主线程饱和，cycript 也跟着超时 124）。
+  修：一词之差改回 `interactionAssistant`，注释同步更正（原注释还写着"12-14
+  无 assistant"，正是误判根源）；patch 头随行数 `4246`→`4245`（删了一行注释，
+  头差一行未来整包重打会直接 apply 失败——又是 0918 坑的镜像）。
+  另：`GeckoEditableSupport.h` 去重后 patch/工作树已逐字节对过。
+- **同日 file:// 白屏：代理空列表直接判失败**：0.19.0 新文件
+  `nsIOSSystemProxySettings.mm`（上游 13+ 移植）在 `GetProxyForURI` 末尾
+  `return aResult.IsEmpty() ? NS_ERROR_FAILURE : NS_OK`——`file://` 这类
+  `CFNetworkCopyProxiesForURL` 返回空数组的 URL 直接 NS_ERROR，包内 bench 页
+  白屏（0.14.0 没这个文件，直连，正常）。同机 http 反而走到正确分支
+  （按系统代理配出 `PROXY 192.168.1.53:7890`，见下），侧证了定位。
+  修：空结果回落 `DIRECT` 再 `NS_OK`（无代理信息=直连，恢复 0.14.0 行为；
+  未知类型维持失败不变，不扩大范围）。patch 头同步 `180`→`184`。
+- **同机 http 验证被局域网代理挡住（环境问题，非 bug）**：机上 WiFi 配了手动
+  代理 `192.168.1.53:7890`（Clash 常用端口），`CFNetworkCopySystemProxySettings`
+  照实返回，App 正确走代理——但该端口已死（`curl -x` 000/exit 52），故
+  example.com 报"找不到网址"错误页（0.19.0 新 WebContentErrorView，本身渲染
+  正常，反而证明了引擎内容管线全通）；机上 shell curl 因不走代理直连 200。
+  出路：用户把 .53 代理开起来，或 iPhone 关 WiFi 代理后重测。另记：
+  `utun0` 只是 iMessage IDS 隧道，无害；本次还顺手确认了新代理码能正确读出
+  系统代理（0.19.0 功能点本身是好的）。
+- **http 全断根因（同夜续）：158 把 socket 进程在 iOS 上默认打开了**：
+  `StaticPrefList.yaml` 里 `network.process.enabled` 与
+  `network.http.network_access_on_socket_process.enabled` 在 156 还是
+  `XP_IOS → false`，158 上游为 BrowserEngineKit 多进程改成 `XP_IOS → true`，
+  0.19.0 合并照单收下——而本移植单进程起不来 socket 进程：
+  DNS+TCP 全灭（unknownHost + 无法连接），file/about（不走 socket）正常。
+  前一条"环境代理挡住"的结论更正：App 本就是 direct 档（机上偏好无
+  NetworkProxy 键），.53 死活与 App 无关；user.js 双 false 实验证明方向
+  （DNS/TCP/HTTP 当场通、标题都解析出来了，残留 body 未绘是另一节）。
+  修：编译期打回 false（156 形状；mobile.js 里本就有同值两行，双保险），
+  patch 两处 hunk 头随行数重算并与 `git diff HEAD` 全文件对过。
+  注意 StaticPref 改动触发宽域重编（603 对象 + gkrust，约 50 分钟）。
+- **0.19.0 真机装机验证（2026-10-26 夜，iPhone 5s/12.5.8，包
+  `dist/Reynard-Jailbroken.ipa` 戳 2176816，备份在仓库外
+  `reynard-ipa-backups/Reynard-Jailbroken-0.19.0-2176816.ipa`）**：
+  主二进制/XUL/dylib/appex 全 `minos 12.0`，戳与 HEAD 一致，`appinst` WiFi
+  装机成功。冷启 90 秒后主进程 0.0~0.2% idle（自递归修好，无 spin）、RSS
+  ~105~130MB，Helper ~20MB；主页（收藏/favicon/常访）渲染正常；
+  `about:config` 完整渲染（引擎内容管线通）；包内 bench 三次
+  `RUNS[75,67,67,67]/[74,68,68,66]/[73,68,69,73]` 均为 Ion 稳态 warmup 形状
+  （与 0.14.0 的 `[75,68,66,66]` 同族，JIT 在 158 上正常）。
+  坑位：① file:// 首载极慢——冷机首次内容绘制要 60 秒以上（0% CPU 干等闪存），
+  35 秒截图必白屏误判，结论以"放暖后再测"为准（同包二次即出）；② cycript
+  同步调 `textFieldShouldReturn:` 与主线程死锁（必改 `performSelector:afterDelay:`
+  异步，调完立刻返回）；`setText` 长 URL 本身无害，早前"卡死"实为撞上自递归
+  转的主线程饱和。③ 本机无 `debugserver12`（`/usr/local/bin` 都没有），真机
+  采样靠机上自带 `spindump <pid> -file`（10 秒，500 采样，主线程 9.685 秒即定罪），
+  再拿本地同 UUID 的 XUL `atos -l <机上基址>` 解符号——这条链路比 lldb 轻，
+  无 USB 也能走 WiFi。待后续：http 外网（等用户修 .53 代理或关 WiFi 代理后重测
+  example.com，当前 direct 档下报 unknownHost，DNS 一节还没闭环）；收藏点按
+  是否进后台标签（用户待看 □ 标签页）；Helper 间歇崩（Renderer/GLEngine，
+  主进程无碍，appex 无 GPU 可用意料之中，另案）。
+- **socket 修验证中状态（同夜 21:20，未闭环）**：编译期双 false 包（戳 5da36ee）
+  装机后 user.js 已删、干净冷启：example.com 从 unknownHost 变成标题栏解析出
+  `Example Do…`（DNS+TCP+HTTP 全通，方向证实），但 body 持续白板、0% CPU
+  （标题有、正文无；file bench 照常绘出 RUNS）。netstat 同期无残留连接
+  （数据到齐或连接已收），IP 直连同样标题有、正文无——问题收敛到 http 通道
+  首刷之后的数据泵/绘制 stall（file/about 不走这条路故正常），待引擎侧深挖。
+  另三条经验：① 删 profile 目录会软砖启动（profiles.ini 悬空指向，无崩溃日志、
+  进程直接消失，恢复目录即活，勿动）；② 脏 profile 下地址栏自动补全会顶掉输入
+  （neverssl 被换成历史里的广告域，切忌用迁移 profile 测地址栏语义）；
+  ③ cycript 跑在主线程，遍历期间手指点按全被吞——"点不动"先排除自家干扰，
+  拿 `ps`+截屏做无注入观察。
+- **http 正文 stall 定位进展（同夜 23:00，未闭环，探针包验证）**：
+  临时探针（工作树，未进 patch）：`nsHttpChannel::OnDataAvailable/OnStopRequest`
+  记字节+状态，`ParentProcessDocumentChannel::RedirectToRealChannel/
+  OnRedirectVerifyCallback` 记结果。局域网 98 字节页：PPDC redirect/verify
+  全 NS_OK，ODA 单刷 98/98 + STOP NS_OK——necko 全链无辜（DNS/TCP/HTTP/PPDC/
+  通道全通），标题解析，file/about 照绘，JIT 照跑；仅 http 文档正文不绘，
+  事后全线程 idle 挂起、无崩溃、无错误页。布局帧/错误页显隐查过正常。
+  下一步：visibility 挂起唤醒试重绘，或 presShell/refresh-driver 插桩
+  （`nsDocShell::EndPageLoad`、paint suppression 状态）。另：`cycript -p`
+  约三分之一概率 `InjectLibrary` assert 杀目标（今晚杀了三次），重要结论
+  必须用 `ps` 复核 pid 是否已换人。
+- **Debug 包验证（2026-10-26 夜，iPhone 5s/1.64 WiFi，`merge/upstream-0.19.0` HEAD
+  `91b220ab`，Xcode.app 26.5 / SDK 26.5，`BUILD SUCCEEDED`）**：
+  主二进制 stub 71KB + `Reynard.debug.dylib` 22M，`minos 12.0`；首装冷启
+  dyld 崩 `Reynard.debug.dylib not valid (Library Validation, no cdhash)`——
+  Debug 包根目录两个 dylib（`Reynard.debug.dylib`/`__preview.dylib`）漏签，
+  `ldid -S` 全补后 `appinst` WiFi 安装成功。冷启 RSS ~105MB，idle 0.0~0.3%；
+  主页/收藏/favicon 正常，`about:config` 完整渲染，`file:// test.html`
+  `REYNARD-LAN-OK`，`file:// bench.html` 冷机白板 130 秒（0% CPU，符合首载慢
+  预期），放暖重驱 `JIT-BENCH RUNS[81,69,66,67]` Ion 稳态（与 0.14.0
+  `[75,68,66,66]` 同族，158 上 JIT 正常）。**`http://example.com` 正文全绘**
+  （中/英/阿三段），Release 包的标题有正文无 stall 在此 Debug 包上未复现——
+  方向：socket 双 false + proxy DIRECT 回落在 Debug 已生效，Release 侧待重打
+  重测对照；当前 WiFi（1.64）`scutil --proxy` 无 HTTP 代理、直连 200，.2/.5
+  代理属别的网络记忆、可忽略。
+- **冷启动 60 秒触摸假死定位（2026-10-26 夜，同一 Debug 包，iPhone 5s/USB syslog
+  + 机上 spindump，launch 00:32:15）**：用户报“有东西盖住、点不动、只有脚本能点”，
+  实为 launch 期主线程被饿死 60 秒，排队触摸解冻后一起触发。donation 卡静态无辜
+  （装饰层 interaction 全关、无全屏容器，且卡可见时触摸已恢复）。
+  证据：syslog probe `00:32:21.3 flush=7` 后 19 秒零跨进程消息；spindump-1
+  （忙时 32% CPU）主线程 `nsAppShell::Run → js::Interpret/Call/GetProperty` 全是
+  启动期 Gecko JS；spindump-2（87 秒）主线程已回正常 mach_idle。
+  坑：atos 必须先按 UUID 定镜像基址——同偏移 92014044 先误判成 libmozglue/
+  AddonPopup（`--check`式教训重演），按 XUL UUID 重定基址后才是正解。
+  下一步：user.js 二分禁启动期服务（normandy/telemetry/captive/safebrowsing/
+  addon-update/push，不碰 JIT/代理/socket/webgl），同协议量“起了→动了”时长；
+  若收敛则继续二分到具体子系统，不急着动引擎。
+- **二分 Round 1 结论（2026-10-27 01:0x，三连发：基线12226 / 实验12757 有user.js /
+  对照12853 无user.js，同机背靠背）**：user.js 那 10 个开关**对冻结无 measurable 影响**
+  ——实验与基线的 probe 静默 gap 同为 19 秒（21→40 vs 11→30），对照组 gap 已缩到
+  9 秒且四连发 spindump 全程无 JS-hog（xul_inner 0/0/5/48，基线单发 1545）。
+  真变量是**暖机**：一夜内第 3/4/5 次冷启，后台一次性初始化逐次摊薄，
+  gap 19→19→9 秒。所以“每次打开卡一分钟”是**真冷启动现象**，
+  user.js 已移走（备份在机上 /tmp/user.js.round1，profile 恢复干净）。
+  下一步：量一次真冷（重启机器后首启）定尺，再决定是削启动期 JS、
+  延后非关键初始化还是只做启动遮罩。
+- **冷启动回归 A/B（2026-10-27 01:2x，同机背靠背，T+22~32s 主线程采样 + probe gap）**：
+  0.19-Debug（CPU 32%，xul_inner 1545，重度 JS，gap 19s）/
+  0.19-Release（CPU 12.8%，xul_inner 138，10s 内走完 startup 消息无 gap）/
+  0.15-Release（CPU 6%，xul_inner 0，全 idle）。
+  结论：用户体感的“0.15 不慢、现在慢”主因是**这晚一直在跑 Debug 包**
+  （-Onone + 断言，主线程启动 JS 开销约 10 倍），不是 0.15→0.19 的引擎/App 回归；
+  Release 下 0.15/0.19 同暖机条件只差 0 vs 138（单次 10s 采样量级，可能是相位噪声，
+  未达回归实锤）。已装回 0.19-Release（T+50s 主页全绘、1.7% idle 可点）。
+  如真冷 Release 下仍觉 0.19 慢，再做 4 连发全覆盖 A/B；否则此案以“日常用 Release、
+  Debug 只做开发”关闭。
