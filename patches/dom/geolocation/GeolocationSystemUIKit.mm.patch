@@ -3,7 +3,7 @@ new file mode 100644
 index 000000000000..dacbede11e4c
 --- /dev/null
 +++ b/dom/geolocation/GeolocationSystemUIKit.mm
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,232 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -80,11 +80,15 @@ index 000000000000..dacbede11e4c
 +      return;
 +    }
 +
-+    [[NSNotificationCenter defaultCenter]
-+        addObserver:mLocationManager.delegate
-+           selector:@selector(sceneDidBecomeActive:)
-+               name:UISceneDidActivateNotification
-+             object:nil];
++    // UISceneDidActivateNotification is nil on iOS 12 (passing nil as the
++    // name observes *every* notification); only watch foregrounding on 13+.
++    if (@available(iOS 13.0, *)) {
++      [[NSNotificationCenter defaultCenter]
++          addObserver:mLocationManager.delegate
++             selector:@selector(sceneDidBecomeActive:)
++                 name:UISceneDidActivateNotification
++               object:nil];
++    }
 +
 +    WeakPtr<UIKitGeolocationPermissionRequest> weakRequest(this);
 +    [application openURL:url
@@ -136,10 +140,12 @@ index 000000000000..dacbede11e4c
 +    RefPtr<UIKitGeolocationPermissionRequest> deathGrip(this);
 +    mIsRunning = false;
 +
-+    [[NSNotificationCenter defaultCenter]
-+        removeObserver:mLocationManager.delegate
-+                  name:UISceneDidActivateNotification
-+                object:nil];
++    if (@available(iOS 13.0, *)) {
++      [[NSNotificationCenter defaultCenter]
++          removeObserver:mLocationManager.delegate
++                    name:UISceneDidActivateNotification
++                  object:nil];
++    }
 +    [mLocationManager.delegate release];
 +    mLocationManager.delegate = nil;
 +    [mLocationManager release];

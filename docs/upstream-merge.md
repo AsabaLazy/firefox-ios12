@@ -352,3 +352,16 @@
   44 条候选多为误报/已守卫；真正的可用性守卫已在重建时逐项确认（见上）。
 - 待后续（进 main 前）：分支 dispatch **nojemalloc** 只跑编译检查；
   真机装机（bench RUNS + otool minos + RSS）结论回填到此。
+
+- **0.19.0 发版前扫描复核（check-ios12.sh PASS 后）**：engine 扫描 184 候选逐条定性——
+  新增真风险仅两处，已修：`nsIOSSystemProxySettings.mm` 的
+  `+[NSURLComponents componentsWithString:]`（iOS 16+，每次代理查询都走，已加
+  13/16 双分支回退到 URL 解析）；`GeolocationSystemUIKit.mm` 的
+  `UISceneDidActivateNotification` 观察者（12 上为 nil 会订阅全部通知，已加
+  13 门，12 回到旧行为）。其余皆误报或已有守卫：VTEncoder 系列 key 全走
+  pragma+nil-check（12 可用即用）；NativeLayerCA（IsCGColor/CreateCGColor/
+  CVBuffer/preventsCapture）全在 `@available`/`__builtin_available` 内；
+  Editable 新文件 interactionAssistant 收敛到 `reynard_interactionAssistantOrNil`
+  （22 处，nil 消息安全已逐点核对），菜单 show/hide 加 13 回退，setupTextInput
+  加 textInteractionForMode 守卫；nsAppShell/scene、device_info、Touch、字体两处
+  均为既有守卫模式；cubeb/PointerSupport/permission 均为旧 API 文本误报。

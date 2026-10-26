@@ -3,7 +3,7 @@ new file mode 100644
 index 000000000000..865fab331c89
 --- /dev/null
 +++ b/toolkit/system/iosproxy/nsIOSSystemProxySettings.mm
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,179 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -94,7 +94,16 @@ index 000000000000..865fab331c89
 +
 +    NSString* spec =
 +        [NSString stringWithUTF8String:PromiseFlatCString(aSpec).get()];
-+    NSURLComponents* components = [NSURLComponents componentsWithString:spec];
++    // +componentsWithString: is iOS 16+. Fall back to URL-based parsing
++    // on iOS 12-15 (same result for valid specs).
++    NSURLComponents* components;
++    if (@available(iOS 16.0, *)) {
++      components = [NSURLComponents componentsWithString:spec];
++    } else {
++      components = [NSURLComponents
++          componentsWithURL:[NSURL URLWithString:spec]
++          resolvingAgainstBaseURL:NO];
++    }
 +    components.scheme =
 +        [NSString stringWithUTF8String:PromiseFlatCString(aScheme).get()];
 +    NSURL* url = components.URL;
