@@ -526,3 +526,12 @@
   下一步：user.js 二分禁启动期服务（normandy/telemetry/captive/safebrowsing/
   addon-update/push，不碰 JIT/代理/socket/webgl），同协议量“起了→动了”时长；
   若收敛则继续二分到具体子系统，不急着动引擎。
+- **二分 Round 1 结论（2026-10-27 01:0x，三连发：基线12226 / 实验12757 有user.js /
+  对照12853 无user.js，同机背靠背）**：user.js 那 10 个开关**对冻结无 measurable 影响**
+  ——实验与基线的 probe 静默 gap 同为 19 秒（21→40 vs 11→30），对照组 gap 已缩到
+  9 秒且四连发 spindump 全程无 JS-hog（xul_inner 0/0/5/48，基线单发 1545）。
+  真变量是**暖机**：一夜内第 3/4/5 次冷启，后台一次性初始化逐次摊薄，
+  gap 19→19→9 秒。所以“每次打开卡一分钟”是**真冷启动现象**，
+  user.js 已移走（备份在机上 /tmp/user.js.round1，profile 恢复干净）。
+  下一步：量一次真冷（重启机器后首启）定尺，再决定是削启动期 JS、
+  延后非关键初始化还是只做启动遮罩。
