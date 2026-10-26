@@ -500,3 +500,17 @@
   （`nsDocShell::EndPageLoad`、paint suppression 状态）。另：`cycript -p`
   约三分之一概率 `InjectLibrary` assert 杀目标（今晚杀了三次），重要结论
   必须用 `ps` 复核 pid 是否已换人。
+- **Debug 包验证（2026-10-26 夜，iPhone 5s/1.64 WiFi，`merge/upstream-0.19.0` HEAD
+  `91b220ab`，Xcode.app 26.5 / SDK 26.5，`BUILD SUCCEEDED`）**：
+  主二进制 stub 71KB + `Reynard.debug.dylib` 22M，`minos 12.0`；首装冷启
+  dyld 崩 `Reynard.debug.dylib not valid (Library Validation, no cdhash)`——
+  Debug 包根目录两个 dylib（`Reynard.debug.dylib`/`__preview.dylib`）漏签，
+  `ldid -S` 全补后 `appinst` WiFi 安装成功。冷启 RSS ~105MB，idle 0.0~0.3%；
+  主页/收藏/favicon 正常，`about:config` 完整渲染，`file:// test.html`
+  `REYNARD-LAN-OK`，`file:// bench.html` 冷机白板 130 秒（0% CPU，符合首载慢
+  预期），放暖重驱 `JIT-BENCH RUNS[81,69,66,67]` Ion 稳态（与 0.14.0
+  `[75,68,66,66]` 同族，158 上 JIT 正常）。**`http://example.com` 正文全绘**
+  （中/英/阿三段），Release 包的标题有正文无 stall 在此 Debug 包上未复现——
+  方向：socket 双 false + proxy DIRECT 回落在 Debug 已生效，Release 侧待重打
+  重测对照；当前 WiFi（1.64）`scutil --proxy` 无 HTTP 代理、直连 200，.2/.5
+  代理属别的网络记忆、可忽略。
