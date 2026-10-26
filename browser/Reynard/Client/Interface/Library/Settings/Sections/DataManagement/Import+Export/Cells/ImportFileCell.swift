@@ -23,7 +23,9 @@ final class ImportFileCell: UITableViewCell {
     private let fileIconView = UIImageView()
     private let fileNameLabel = UILabel()
     private let sizeLabel = UILabel()
-    private var thumbnailRequest: QLThumbnailGenerator.Request?
+    // QLThumbnailGenerator is iOS 13+ and stored properties can't be
+    // @available-gated: type-erase to Any? and cast at gated use sites.
+    private var thumbnailRequest: Any?
     
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -37,10 +39,11 @@ final class ImportFileCell: UITableViewCell {
     
     override func prepareForReuse() {
         super.prepareForReuse()
-        if let thumbnailRequest {
-            QLThumbnailGenerator.shared.cancel(thumbnailRequest)
+        if #available(iOS 13.0, *),
+           let request = thumbnailRequest as? QLThumbnailGenerator.Request {
+            QLThumbnailGenerator.shared.cancel(request)
+            thumbnailRequest = nil
         }
-        thumbnailRequest = nil
         fileIconView.image = nil
     }
     
@@ -53,7 +56,7 @@ final class ImportFileCell: UITableViewCell {
         
         sizeLabel.font = .preferredFont(forTextStyle: .subheadline)
         sizeLabel.adjustsFontForContentSizeCategory = true
-        sizeLabel.textColor = .secondaryLabel
+        sizeLabel.textColor = .appSecondaryLabel
         sizeLabel.numberOfLines = 2
     }
     
@@ -86,22 +89,26 @@ final class ImportFileCell: UITableViewCell {
         sizeLabel.text = byteCount.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
         ?? NSLocalizedString("Unknown size", comment: "")
         
-        if let thumbnailRequest {
-            QLThumbnailGenerator.shared.cancel(thumbnailRequest)
-        }
         fileIconView.image = UIImage(named: "reynard.document")
-        let request = QLThumbnailGenerator.Request(
-            fileAt: fileURL, size: UX.thumbnailSize, scale: UIScreen.main.scale, representationTypes: .icon
-        )
-        request.iconMode = true
-        thumbnailRequest = request
-        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] thumbnail, _ in
-            DispatchQueue.main.async {
-                guard let self, self.thumbnailRequest === request else {
-                    return
-                }
-                if let thumbnail {
-                    self.fileIconView.image = thumbnail.uiImage
+        if #available(iOS 13.0, *),
+           let previous = thumbnailRequest as? QLThumbnailGenerator.Request {
+            QLThumbnailGenerator.shared.cancel(previous)
+        }
+        thumbnailRequest = nil
+        if #available(iOS 13.0, *) {
+            let request = QLThumbnailGenerator.Request(
+                fileAt: fileURL, size: UX.thumbnailSize, scale: UIScreen.main.scale, representationTypes: .icon
+            )
+            request.iconMode = true
+            thumbnailRequest = request
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] thumbnail, _ in
+                DispatchQueue.main.async {
+                    guard let self, (self.thumbnailRequest as? QLThumbnailGenerator.Request) === request else {
+                        return
+                    }
+                    if let thumbnail {
+                        self.fileIconView.image = thumbnail.uiImage
+                    }
                 }
             }
         }

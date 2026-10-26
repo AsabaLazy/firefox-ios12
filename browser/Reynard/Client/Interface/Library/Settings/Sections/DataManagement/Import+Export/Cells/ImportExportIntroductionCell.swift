@@ -32,7 +32,7 @@ final class ImportExportIntroductionCell: UITableViewCell {
     private func configureViews() {
         selectionStyle = .none
         iconView.contentMode = .scaleAspectFit
-        iconView.tintColor = .label
+        iconView.tintColor = .appLabel
         
         titleLabel.font = UIFont(
             descriptor: UIFontDescriptor.preferredFontDescriptor(withTextStyle: .title2)
@@ -47,7 +47,7 @@ final class ImportExportIntroductionCell: UITableViewCell {
         descriptionLabel.font = .preferredFont(forTextStyle: .body)
         descriptionLabel.adjustsFontForContentSizeCategory = true
         descriptionLabel.textAlignment = .center
-        descriptionLabel.textColor = .secondaryLabel
+        descriptionLabel.textColor = .appSecondaryLabel
         descriptionLabel.numberOfLines = 0
     }
     

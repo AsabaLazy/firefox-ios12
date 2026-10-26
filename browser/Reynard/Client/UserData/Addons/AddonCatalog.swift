@@ -8,61 +8,108 @@
 import Foundation
 
 nonisolated enum AddonCatalog {
-    static func resolve(id: String, engineVersion: String) async throws -> URL {
+    static func resolve(
+        id: String,
+        engineVersion: String,
+        cancellation: UserDataCancellation,
+        completion: @escaping (Result<URL, Error>) -> Void
+    ) {
         var components = URLComponents()
         components.scheme = "https"
         components.host = "addons.mozilla.org"
         components.path = "/api/v5/addons/addon/\(id)/"
         guard let url = components.url else {
-            throw AddonDataError.invalidFile
+            completion(.failure(AddonDataError.invalidFile))
+            return
         }
-        
-        let detail: Detail
-        do {
-            detail = try await fetch(Detail.self, from: url)
-        } catch AddonDataError.catalogHTTP(404) {
-            try Task.checkCancellation()
-            throw AddonDataError.catalog("The add-on is no longer available from Mozilla.")
+
+        fetch(Detail.self, from: url, cancellation: cancellation) { result in
+            switch result {
+            case .failure(let error as AddonDataError):
+                if case .catalogHTTP(404) = error {
+                    completion(.failure(AddonDataError.catalog("The add-on is no longer available from Mozilla.")))
+                } else {
+                    completion(.failure(error))
+                }
+            case .failure(let error):
+                completion(.failure(error))
+            case .success(let detail):
+                guard detail.guid == id, detail.type == "extension", !detail.isDisabled else {
+                    completion(.failure(AddonDataError.catalog("Mozilla returned invalid add-on information.")))
+                    return
+                }
+
+                if let version = detail.currentVersion, version.supports(engineVersion) {
+                    do {
+                        completion(.success(try downloadURL(for: version)))
+                    } catch {
+                        completion(.failure(error))
+                    }
+                    return
+                }
+
+                fetchVersionPages(url: url, engineVersion: engineVersion, cancellation: cancellation, completion: completion)
+            }
         }
-        
-        guard detail.guid == id, detail.type == "extension", !detail.isDisabled else {
-            throw AddonDataError.catalog("Mozilla returned invalid add-on information.")
-        }
-        
-        if let version = detail.currentVersion, version.supports(engineVersion) {
-            return try downloadURL(for: version)
-        }
-        
+    }
+
+    private static func fetchVersionPages(
+        url: URL,
+        engineVersion: String,
+        cancellation: UserDataCancellation,
+        completion: @escaping (Result<URL, Error>) -> Void
+    ) {
         let versionsURL = url.appendingPathComponent("versions/")
-        var pageURL: URL? = versionsURL
         var visited = Set<URL>()
         var selected: Version?
-        while let currentURL = pageURL {
-            try Task.checkCancellation()
+
+        func fetchNext(_ pageURL: URL?) {
+            guard let currentURL = pageURL else {
+                if let selected {
+                    do {
+                        completion(.success(try downloadURL(for: selected)))
+                    } catch {
+                        completion(.failure(error))
+                    }
+                } else {
+                    completion(.failure(AddonDataError.catalog("No public Firefox Mobile version of the add-on supports the current engine.")))
+                }
+                return
+            }
+
+            do {
+                try cancellation.checkCancellation()
+            } catch {
+                completion(.failure(error))
+                return
+            }
             guard currentURL.scheme == "https",
                   currentURL.host == url.host,
                   currentURL.path == versionsURL.path,
                   visited.insert(currentURL).inserted else {
-                throw AddonDataError.catalog("Mozilla returned invalid add-on information.")
+                completion(.failure(AddonDataError.catalog("Mozilla returned invalid add-on information.")))
+                return
             }
-            
-            let page = try await fetch(Page.self, from: currentURL)
-            for version in page.results where version.supports(engineVersion) {
-                if let selected, AddonVersionOrder.compare(version.version, selected.version) <= 0 {
-                    continue
+
+            fetch(Page.self, from: currentURL, cancellation: cancellation) { result in
+                switch result {
+                case .failure(let error):
+                    completion(.failure(error))
+                case .success(let page):
+                    for version in page.results where version.supports(engineVersion) {
+                        if let selected, AddonVersionOrder.compare(version.version, selected.version) <= 0 {
+                            continue
+                        }
+
+                        selected = version
+                    }
+
+                    fetchNext(page.next)
                 }
-                
-                selected = version
             }
-            
-            pageURL = page.next
         }
-        
-        guard let selected else {
-            throw AddonDataError.catalog("No public Firefox Mobile version of the add-on supports the current engine.")
-        }
-        
-        return try downloadURL(for: selected)
+
+        fetchNext(versionsURL)
     }
     
     private static func downloadURL(for version: Version) throws -> URL {
@@ -79,31 +126,37 @@ nonisolated enum AddonCatalog {
     }
     
     private static func fetch<Value: Decodable & Sendable>(
-        _ type: Value.Type, from url: URL
-    ) async throws -> Value {
-        let request = AddonCatalogRequest()
-        let data: Data = try await withTaskCancellationHandler {
-            try Task.checkCancellation()
-            return try await withCheckedThrowingContinuation { continuation in
-                let task = URLSession.shared.dataTask(with: url) { data, response, error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else if let response = response as? HTTPURLResponse, response.statusCode != 200 {
-                        continuation.resume(throwing: AddonDataError.catalogHTTP(response.statusCode))
-                    } else if let data, response is HTTPURLResponse {
-                        continuation.resume(returning: data)
-                    } else {
-                        continuation.resume(throwing: URLError(.badServerResponse))
-                    }
-                }
-                request.start(task)
-            }
-        } onCancel: {
-            request.cancel()
+        _ type: Value.Type, from url: URL,
+        cancellation: UserDataCancellation,
+        completion: @escaping (Result<Value, Error>) -> Void
+    ) {
+        do {
+            try cancellation.checkCancellation()
+        } catch {
+            completion(.failure(error))
+            return
         }
-        
-        try Task.checkCancellation()
-        return try JSONDecoder().decode(type, from: data)
+
+        let request = AddonCatalogRequest()
+        let task = URLSession.shared.dataTask(with: url) { data, response, error in
+            let result: Result<Value, Error>
+            do {
+                if let error {
+                    throw error
+                } else if let response = response as? HTTPURLResponse, response.statusCode != 200 {
+                    throw AddonDataError.catalogHTTP(response.statusCode)
+                } else if let data, response is HTTPURLResponse {
+                    try cancellation.checkCancellation()
+                    result = .success(try JSONDecoder().decode(type, from: data))
+                } else {
+                    throw URLError(.badServerResponse)
+                }
+            } catch {
+                result = .failure(error)
+            }
+            completion(result)
+        }
+        request.start(task)
     }
     
     private struct Detail: Decodable, Sendable {

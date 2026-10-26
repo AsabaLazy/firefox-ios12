@@ -11,23 +11,28 @@ import ZIPFoundation
 
 enum UserDataExporter {
     static func exportData(
-        to fileURL: URL, types: Set<UserDataType> = Set(UserDataType.allCases)
-    ) async throws -> UserDataExportReport {
+        to fileURL: URL, types: Set<UserDataType> = Set(UserDataType.allCases),
+        cancellation: UserDataCancellation,
+        completion: @escaping (Result<UserDataExportReport, Error>) -> Void
+    ) {
         guard fileURL.isFileURL else {
-            throw CocoaError(.fileWriteUnsupportedScheme)
+            completion(.failure(CocoaError(.fileWriteUnsupportedScheme)))
+            return
         }
-        
+
         guard !fileURL.path.contains("\0") else {
-            throw CocoaError(.fileWriteInvalidFileName)
+            completion(.failure(CocoaError(.fileWriteInvalidFileName)))
+            return
         }
-        
+
         let selectedTypes = UserDataType.allCases.filter { types.contains($0) }
         let fileExtension = fileURL.pathExtension.lowercased()
         let isArchive = fileExtension == "zip"
         guard !selectedTypes.isEmpty else {
-            throw UserDataError.invalidExportSelection
+            completion(.failure(UserDataError.invalidExportSelection))
+            return
         }
-        
+
         switch fileExtension {
         case "zip":
             break
@@ -36,54 +41,138 @@ enum UserDataExporter {
         case "json" where types == [.history] || types == [.extensions]:
             break
         default:
-            throw UserDataError.invalidExportSelection
+            completion(.failure(UserDataError.invalidExportSelection))
+            return
         }
-        
+
         let destinationURL = isArchive
         ? fileURL.deletingLastPathComponent().appendingPathComponent(archiveFileName)
         : fileURL
-        
-        let hasAccess = fileURL.startAccessingSecurityScopedResource()
-        defer {
-            if hasAccess {
-                fileURL.stopAccessingSecurityScopedResource()
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let hasAccess = fileURL.startAccessingSecurityScopedResource()
+            defer {
+                if hasAccess {
+                    fileURL.stopAccessingSecurityScopedResource()
+                }
             }
-        }
-        
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("UserData-\(UUID().uuidString)", isDirectory: true)
-        if isArchive {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
-        defer {
+
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("UserData-\(UUID().uuidString)", isDirectory: true)
             if isArchive {
-                try? FileManager.default.removeItem(at: directory)
+                do {
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                } catch {
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
+                    }
+                    return
+                }
             }
-        }
-        
-        var report = UserDataExportReport(fileURL: destinationURL)
-        for type in selectedTypes {
-            try Task.checkCancellation()
-            let destination = isArchive ? directory.appendingPathComponent(type.fileName) : destinationURL
-            let count: Int
-            switch type {
-            case .bookmarks:
-                count = try await BookmarkExporter.exportBookmarks(to: destination)
-            case .history:
-                count = try await SafariHistoryExporter.exportHistory(to: destination)
-            case .extensions:
-                count = try await AddonExporter.exportAddons(to: destination)
+            defer {
+                if isArchive {
+                    try? FileManager.default.removeItem(at: directory)
+                }
             }
-            report.recordCounts[type] = count
+
+            let report = UserDataExportReport(fileURL: destinationURL)
+            exportNext(
+                selectedTypes, index: 0, isArchive: isArchive,
+                directory: directory, destinationURL: destinationURL,
+                cancellation: cancellation, report: report,
+                completion: completion
+            )
         }
-        
-        if isArchive {
-            try await writeArchive(from: directory, types: selectedTypes, to: destinationURL)
-        }
-        
-        return report
     }
-    
+
+    private static func exportNext(
+        _ types: [UserDataType], index: Int,
+        isArchive: Bool, directory: URL, destinationURL: URL,
+        cancellation: UserDataCancellation,
+        report: UserDataExportReport,
+        completion: @escaping (Result<UserDataExportReport, Error>) -> Void
+    ) {
+        var report = report
+        guard index < types.count else {
+            if isArchive {
+                writeArchive(from: directory, types: types, to: destinationURL, cancellation: cancellation) { result in
+                    switch result {
+                    case .success:
+                        DispatchQueue.main.async {
+                            completion(.success(report))
+                        }
+                    case .failure(let error):
+                        DispatchQueue.main.async {
+                            completion(.failure(error))
+                        }
+                    }
+                }
+            } else {
+                DispatchQueue.main.async {
+                    completion(.success(report))
+                }
+            }
+            return
+        }
+
+        let type = types[index]
+        do {
+            try cancellation.checkCancellation()
+        } catch {
+            DispatchQueue.main.async {
+                completion(.failure(error))
+            }
+            return
+        }
+
+        let destination = isArchive ? directory.appendingPathComponent(type.fileName) : destinationURL
+        let recordCount: (Int) -> Void = { count in
+            report.recordCounts[type] = count
+            exportNext(
+                types, index: index + 1,
+                isArchive: isArchive, directory: directory, destinationURL: destinationURL,
+                cancellation: cancellation, report: report,
+                completion: completion
+            )
+        }
+
+        switch type {
+        case .bookmarks:
+            BookmarkExporter.exportBookmarks(to: destination, cancellation: cancellation) { result in
+                switch result {
+                case .success(let count):
+                    recordCount(count)
+                case .failure(let error):
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        case .history:
+            SafariHistoryExporter.exportHistory(to: destination, cancellation: cancellation) { result in
+                switch result {
+                case .success(let count):
+                    recordCount(count)
+                case .failure(let error):
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        case .extensions:
+            AddonExporter.exportAddons(to: destination, cancellation: cancellation) { result in
+                switch result {
+                case .success(let count):
+                    recordCount(count)
+                case .failure(let error):
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        }
+    }
+
     static var archiveFileName: String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -93,52 +182,61 @@ enum UserDataExporter {
         return "Reynard Export \(formatter.string(from: Date())).zip"
     }
     
-    private static func writeArchive(from directory: URL, types: [UserDataType], to fileURL: URL) async throws {
-        let progress = Progress(totalUnitCount: 0)
-        let task = Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
+    private static func writeArchive(
+        from directory: URL, types: [UserDataType], to fileURL: URL,
+        cancellation: UserDataCancellation,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let progress = Progress(totalUnitCount: 0)
             let coordinator = NSFileCoordinator()
             var coordinationError: NSError?
             var result: Result<Void, Error> = .success(())
-            
+
             coordinator.coordinate(writingItemAt: fileURL, options: .forReplacing, error: &coordinationError) { destination in
                 result = Result {
-                    try Task.checkCancellation()
+                    try cancellation.checkCancellation()
                     let temporaryURL = destination.deletingLastPathComponent()
                         .appendingPathComponent(".\(UUID().uuidString).zip")
                     defer {
                         try? FileManager.default.removeItem(at: temporaryURL)
                     }
-                    
+
                     do {
                         let archive = try Archive(url: temporaryURL, accessMode: .create)
                         for type in types {
-                            try Task.checkCancellation()
+                            try cancellation.checkCancellation()
                             try archive.addEntry(
                                 with: type.fileName, relativeTo: directory,
                                 compressionMethod: .deflate, progress: progress
                             )
                         }
                     }
-                    
-                    try Task.checkCancellation()
+
+                    try cancellation.checkCancellation()
                     guard rename(temporaryURL.path, destination.path) == 0 else {
                         throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
                     }
                 }
             }
-            
+
             if let coordinationError {
-                throw coordinationError
+                DispatchQueue.main.async {
+                    completion(.failure(coordinationError))
+                }
+                return
             }
-            try result.get()
-        }
-        
-        try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            progress.cancel()
-            task.cancel()
+
+            switch result {
+            case .success:
+                DispatchQueue.main.async {
+                    completion(.success(()))
+                }
+            case .failure(let error):
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+            }
         }
     }
 }

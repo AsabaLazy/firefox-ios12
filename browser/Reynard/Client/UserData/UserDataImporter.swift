@@ -11,119 +11,198 @@ import ZIPFoundation
 
 enum UserDataImporter {
     static func importData(
-        from fileURL: URL, onTypeDetected: ((UserDataType) async -> Void)? = nil
-    ) async throws -> UserDataImportReport {
+        from fileURL: URL, onTypeDetected: ((UserDataType) -> Void)? = nil,
+        cancellation: UserDataCancellation,
+        completion: @escaping (Result<UserDataImportReport, Error>) -> Void
+    ) {
         guard fileURL.isFileURL else {
-            throw CocoaError(.fileReadUnsupportedScheme)
+            completion(.failure(CocoaError(.fileReadUnsupportedScheme)))
+            return
         }
-        
+
         guard !fileURL.path.contains("\0") else {
-            throw CocoaError(.fileReadInvalidFileName)
+            completion(.failure(CocoaError(.fileReadInvalidFileName)))
+            return
         }
-        
+
         let fileExtension = fileURL.pathExtension.lowercased()
         guard ["html", "json", "zip"].contains(fileExtension) else {
-            throw UserDataError.unsupportedFile
+            completion(.failure(UserDataError.unsupportedFile))
+            return
         }
-        
-        let isArchive = fileExtension == "zip"
-        let hasAccess = fileURL.startAccessingSecurityScopedResource()
-        defer {
-            if hasAccess {
-                fileURL.stopAccessingSecurityScopedResource()
-            }
-        }
-        
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("UserData-\(UUID().uuidString)", isDirectory: true)
-        if isArchive {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
-        defer {
-            if isArchive {
-                try? FileManager.default.removeItem(at: directory)
-            }
-        }
-        
-        let progress = Progress(totalUnitCount: 0)
-        let task = Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
-            if isArchive {
-                return try extract(fileURL, into: directory, progress: progress)
-            }
-            
-            return [Source(url: fileURL, name: fileURL.lastPathComponent)]
-        }
-        let sources = try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            progress.cancel()
-            task.cancel()
-        }
-        
-        var report = UserDataImportReport()
-        for source in sources {
-            try Task.checkCancellation()
-            var dataType: UserDataType?
-            do {
-                let inspection = Task.detached(priority: .userInitiated) {
-                    try format(of: source.url, requiresExportMetadata: isArchive)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let isArchive = fileExtension == "zip"
+            let hasAccess = fileURL.startAccessingSecurityScopedResource()
+            defer {
+                if hasAccess {
+                    fileURL.stopAccessingSecurityScopedResource()
                 }
-                let detectedFormat: Format
+            }
+
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("UserData-\(UUID().uuidString)", isDirectory: true)
+            if isArchive {
                 do {
-                    detectedFormat = try await withTaskCancellationHandler {
-                        try await inspection.value
-                    } onCancel: {
-                        inspection.cancel()
-                    }
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 } catch {
-                    try Task.checkCancellation()
-                    guard isArchive else {
-                        throw error
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
                     }
-                    
-                    switch error {
-                    case UserDataError.unsupportedFile, HistoryDataError.invalidJSON, BookmarkDataError.unrecognizedFormat:
-                        continue
-                    default:
-                        throw error
-                    }
+                    return
                 }
-                
-                dataType = detectedFormat.dataType
-                await onTypeDetected?(detectedFormat.dataType)
-                try Task.checkCancellation()
-                
-                switch detectedFormat {
-                case .bookmarks(let document):
-                    let result = try await BookmarkImporter.importBookmarks(document)
-                    report.results.append(.bookmarks(fileName: source.name, report: result))
-                case .safariHistory:
-                    let result = try await SafariHistoryImporter.importHistory(from: source.url)
-                    report.results.append(.history(fileName: source.name, report: result))
-                case .chromeHistory:
-                    let result = try await ChromeHistoryImporter.importHistory(from: source.url)
-                    report.results.append(.history(fileName: source.name, report: result))
-                case .extensions:
-                    let result = try await AddonImporter.importAddons(from: source.url)
-                    report.results.append(.extensions(fileName: source.name, report: result))
-                case .safariExtensions:
-                    report.results.append(.skipped(
-                        fileName: source.name,
-                        reason: UserDataError.unsupportedSafariExtensions.localizedDescription
-                    ))
+            }
+            defer {
+                if isArchive {
+                    try? FileManager.default.removeItem(at: directory)
+                }
+            }
+
+            let progress = Progress(totalUnitCount: 0)
+            let sources: [Source]
+            do {
+                try cancellation.checkCancellation()
+                if isArchive {
+                    sources = try extract(fileURL, into: directory, progress: progress, cancellation: cancellation)
+                } else {
+                    sources = [Source(url: fileURL, name: fileURL.lastPathComponent)]
                 }
             } catch {
-                try Task.checkCancellation()
-                report.results.append(.failed(fileName: source.name, dataType: dataType, message: error.localizedDescription))
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+                return
             }
+
+            var report = UserDataImportReport()
+            importSources(
+                sources, index: 0, isArchive: isArchive,
+                onTypeDetected: onTypeDetected,
+                cancellation: cancellation, report: report,
+                completion: completion
+            )
         }
-        
-        guard !isArchive || !report.results.isEmpty else {
-            throw UserDataError.noImportableFiles
+    }
+
+    private static func importSources(
+        _ sources: [Source], index: Int, isArchive: Bool,
+        onTypeDetected: ((UserDataType) -> Void)?,
+        cancellation: UserDataCancellation,
+        report: UserDataImportReport,
+        completion: @escaping (Result<UserDataImportReport, Error>) -> Void
+    ) {
+        var report = report
+        guard index < sources.count else {
+            let report = report
+            if !isArchive || !report.results.isEmpty {
+                DispatchQueue.main.async {
+                    completion(.success(report))
+                }
+            } else {
+                DispatchQueue.main.async {
+                    completion(.failure(UserDataError.noImportableFiles))
+                }
+            }
+            return
         }
-        
-        return report
+
+        let source = sources[index]
+        let next = {
+            importSources(
+                sources, index: index + 1, isArchive: isArchive,
+                onTypeDetected: onTypeDetected,
+                cancellation: cancellation, report: report,
+                completion: completion
+            )
+        }
+
+        do {
+            try cancellation.checkCancellation()
+        } catch {
+            DispatchQueue.main.async {
+                completion(.failure(error))
+            }
+            return
+        }
+
+        var dataType: UserDataType?
+        let detectedFormat: Format
+        do {
+            detectedFormat = try format(of: source.url, requiresExportMetadata: isArchive, cancellation: cancellation)
+        } catch {
+            if isArchive {
+                switch error {
+                case UserDataError.unsupportedFile, HistoryDataError.invalidJSON, BookmarkDataError.unrecognizedFormat:
+                    next()
+                    return
+                default:
+                    break
+                }
+            }
+            report.results.append(.failed(fileName: source.name, dataType: dataType, message: error.localizedDescription))
+            next()
+            return
+        }
+
+        dataType = detectedFormat.dataType
+        onTypeDetected?(detectedFormat.dataType)
+        do {
+            try cancellation.checkCancellation()
+        } catch {
+            DispatchQueue.main.async {
+                completion(.failure(error))
+            }
+            return
+        }
+
+        switch detectedFormat {
+        case .bookmarks(let document):
+            BookmarkImporter.importBookmarks(document, cancellation: cancellation) { result in
+                switch result {
+                case .success(let result):
+                    report.results.append(.bookmarks(fileName: source.name, report: result))
+                case .failure(let error):
+                    report.results.append(.failed(fileName: source.name, dataType: dataType, message: error.localizedDescription))
+                }
+                next()
+            }
+        case .safariHistory:
+            SafariHistoryImporter.importHistory(from: source.url, cancellation: cancellation) { result in
+                switch result {
+                case .success(let result):
+                    report.results.append(.history(fileName: source.name, report: result))
+                case .failure(let error):
+                    report.results.append(.failed(fileName: source.name, dataType: dataType, message: error.localizedDescription))
+                }
+                next()
+            }
+        case .chromeHistory:
+            ChromeHistoryImporter.importHistory(from: source.url, cancellation: cancellation) { result in
+                switch result {
+                case .success(let result):
+                    report.results.append(.history(fileName: source.name, report: result))
+                case .failure(let error):
+                    report.results.append(.failed(fileName: source.name, dataType: dataType, message: error.localizedDescription))
+                }
+                next()
+            }
+        case .extensions:
+            AddonImporter.importAddons(from: source.url, cancellation: cancellation) { result in
+                switch result {
+                case .success(let result):
+                    report.results.append(.extensions(fileName: source.name, report: result))
+                case .failure(let error):
+                    report.results.append(.failed(fileName: source.name, dataType: dataType, message: error.localizedDescription))
+                }
+                next()
+            }
+        case .safariExtensions:
+            report.results.append(.skipped(
+                fileName: source.name,
+                reason: UserDataError.unsupportedSafariExtensions.localizedDescription
+            ))
+            next()
+        }
     }
     
     nonisolated private struct Source: Sendable {
@@ -150,14 +229,14 @@ enum UserDataImporter {
         }
     }
     
-    nonisolated private static func format(of url: URL, requiresExportMetadata: Bool) throws -> Format {
-        try Task.checkCancellation()
+    nonisolated private static func format(of url: URL, requiresExportMetadata: Bool, cancellation: UserDataCancellation) throws -> Format {
+        try cancellation.checkCancellation()
         if url.pathExtension.lowercased() == "html" {
-            let document = try BookmarkHTMLParser.parse(fileURL: url, requiresExportMetadata: requiresExportMetadata)
+            let document = try BookmarkHTMLParser.parse(fileURL: url, requiresExportMetadata: requiresExportMetadata, cancellation: cancellation)
             return .bookmarks(document)
         }
-        
-        let reader = try HistoryJSONReader(fileURL: url)
+
+        let reader = try HistoryJSONReader(fileURL: url, cancellation: cancellation)
         switch try reader.firstRootKey(in: ["history", "Browser History", "extensions"]) {
         case "history":
             return .safariHistory
@@ -176,14 +255,14 @@ enum UserDataImporter {
     }
     
     nonisolated private static func extract(
-        _ url: URL, into directory: URL, progress: Progress
+        _ url: URL, into directory: URL, progress: Progress, cancellation: UserDataCancellation
     ) throws -> [Source] {
         let expectedEntryCount = try archiveEntryCount(at: url)
         let archive = try Archive(url: url, accessMode: .read)
         var sources: [Source] = []
         var entryCount: UInt64 = 0
         for entry in archive {
-            try Task.checkCancellation()
+            try cancellation.checkCancellation()
             entryCount += 1
             let path = entry.path
             let fileExtension = (path as NSString).pathExtension

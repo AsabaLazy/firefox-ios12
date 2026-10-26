@@ -25,6 +25,7 @@ final class ContextMenuCoordinator: NSObject {
         static let targetedPreviewSideLength: CGFloat = 1
     }
     
+    @available(iOS 13.0, *)
     private final class MenuInteraction: UIContextMenuInteraction {
         @available(iOS 14.0, *)
         override var menuAppearance: UIContextMenuInteraction.appearance {
@@ -70,34 +71,36 @@ final class ContextMenuCoordinator: NSObject {
         guard let interaction,
               let interactionView = interaction.view,
               let host,
-              let window = interactionView.window else {
+              let window = interactionView.window,
+              #available(iOS 13.0, *),
+              let menuInteraction = interaction as? UIContextMenuInteraction else {
             return
         }
-        
+
         let sourceView = host.contextMenuSourceView
         let sourcePoint = allowsPreview
         ? sourceView.convert(point, from: window.screen.coordinateSpace)
-        : interaction.location(in: sourceView)
+        : menuInteraction.location(in: sourceView)
         let context = ContextMenuContext(target: target, point: sourcePoint, allowsPreview: allowsPreview)
         closePreview()
         pendingContext = context
         isCommitting = false
         isPresenting = true
-        
+
         let selector = NSSelectorFromString("_presentMenuAtLocation:")
-        guard interaction.responds(to: selector) else {
+        guard menuInteraction.responds(to: selector) else {
             isPresenting = false
             pendingContext = nil
             return
         }
-        
+
         Haptics.rigid()
-        
+
         let location = interactionView.convert(context.point, from: sourceView)
-        let implementation = interaction.method(for: selector)
+        let implementation = menuInteraction.method(for: selector)
         typealias PresentMenu = @convention(c) (AnyObject, Selector, CGPoint) -> Void
         let presentMenu = unsafeBitCast(implementation, to: PresentMenu.self)
-        presentMenu(interaction, selector, location)
+        presentMenu(menuInteraction, selector, location)
     }
     
     private func openLinkPreview(disposition: TabOpenDisposition) {

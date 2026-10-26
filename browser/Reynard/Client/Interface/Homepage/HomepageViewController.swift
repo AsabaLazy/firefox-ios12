@@ -135,6 +135,13 @@ final class HomepageViewController: UINavigationController {
     }
     
     private func updateNavigationBarAppearance() {
+        // UINavigationBarAppearance is iOS 13+. iOS 12 keeps the legacy
+        // translucent bar (tint set below).
+        guard #available(iOS 13.0, *) else {
+            navigationBar.tintColor = HomepageWallpaper.foregroundColor(for: contentMode)
+            return
+        }
+
         let foregroundColor = HomepageWallpaper.foregroundColor(for: contentMode)
         let appearance = UINavigationBarAppearance()
         appearance.configureWithTransparentBackground()

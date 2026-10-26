@@ -9,60 +9,72 @@ import Darwin
 import Foundation
 
 enum BookmarkExporter {
-    static func exportBookmarks(to fileURL: URL) async throws -> Int {
+    static func exportBookmarks(
+        to fileURL: URL,
+        cancellation: UserDataCancellation,
+        completion: @escaping (Result<Int, Error>) -> Void
+    ) {
         guard fileURL.isFileURL else {
-            throw CocoaError(.fileWriteUnsupportedScheme)
+            completion(.failure(CocoaError(.fileWriteUnsupportedScheme)))
+            return
         }
-        
+
         guard !fileURL.path.contains("\0") else {
-            throw CocoaError(.fileWriteInvalidFileName)
+            completion(.failure(CocoaError(.fileWriteInvalidFileName)))
+            return
         }
-        
+
         let store = BookmarkStore.shared
-        let cancellation = UserDataCancellation()
-        let nodes = try await withTaskCancellationHandler {
-            try await store.performBookmarkDataOperation { database in
-                return try BookmarkDataStorage(database: database).readNodes(cancellation: cancellation)
-            }
-        } onCancel: {
-            cancellation.cancel()
-        }
-        
-        let task = Task.detached(priority: .userInitiated) {
-            let hasAccess = fileURL.startAccessingSecurityScopedResource()
-            defer {
-                if hasAccess {
-                    fileURL.stopAccessingSecurityScopedResource()
+        store.performBookmarkDataOperation({ database in
+            return try BookmarkDataStorage(database: database).readNodes(cancellation: cancellation)
+        }) { (result: Result<[BookmarkDataStorage.Node], Error>) in
+            switch result {
+            case .failure(let error):
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+            case .success(let nodes):
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let count: Int
+                    do {
+                        let hasAccess = fileURL.startAccessingSecurityScopedResource()
+                        defer {
+                            if hasAccess {
+                                fileURL.stopAccessingSecurityScopedResource()
+                            }
+                        }
+
+                        try cancellation.checkCancellation()
+                        let temporaryURL = fileURL.deletingLastPathComponent()
+                            .appendingPathComponent(".\(UUID().uuidString).html")
+                        defer {
+                            try? FileManager.default.removeItem(at: temporaryURL)
+                        }
+
+                        count = try BookmarkHTMLWriter.write(nodes, to: temporaryURL, cancellation: cancellation)
+                        try cancellation.checkCancellation()
+
+                        guard rename(temporaryURL.path, fileURL.path) == 0 else {
+                            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                        }
+                    } catch {
+                        DispatchQueue.main.async {
+                            completion(.failure(error))
+                        }
+                        return
+                    }
+
+                    DispatchQueue.main.async {
+                        completion(.success(count))
+                    }
                 }
             }
-            
-            try Task.checkCancellation()
-            let temporaryURL = fileURL.deletingLastPathComponent()
-                .appendingPathComponent(".\(UUID().uuidString).html")
-            defer {
-                try? FileManager.default.removeItem(at: temporaryURL)
-            }
-            
-            let count = try BookmarkHTMLWriter.write(nodes, to: temporaryURL)
-            try Task.checkCancellation()
-            
-            guard rename(temporaryURL.path, fileURL.path) == 0 else {
-                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-            }
-            
-            return count
-        }
-        
-        return try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            task.cancel()
         }
     }
 }
 
 nonisolated private enum BookmarkHTMLWriter {
-    static func write(_ nodes: [BookmarkDataStorage.Node], to fileURL: URL) throws -> Int {
+    static func write(_ nodes: [BookmarkDataStorage.Node], to fileURL: URL, cancellation: UserDataCancellation) throws -> Int {
         let writer = try UserDataFileWriter(fileURL: fileURL)
         
         try writer.append("""
@@ -82,7 +94,7 @@ nonisolated private enum BookmarkHTMLWriter {
         var folders = ["root________"]
         var bookmarkCount = 0
         while let node = pending.popLast() {
-            try Task.checkCancellation()
+            try cancellation.checkCancellation()
             
             guard visited.insert(node.guid).inserted else {
                 throw BookmarkDataError.invalidStoredData

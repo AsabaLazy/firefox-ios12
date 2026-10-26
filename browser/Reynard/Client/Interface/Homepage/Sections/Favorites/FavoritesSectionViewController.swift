@@ -489,7 +489,9 @@ final class FavoritesSectionViewController: UIViewController {
             return
         }
         
-        presentFavoriteContextMenu(for: cell)
+        if #available(iOS 13.0, *) {
+            presentFavoriteContextMenu(for: cell)
+        }
     }
     
     @objc private func handleReorderLongPress(_ gestureRecognizer: UILongPressGestureRecognizer) {

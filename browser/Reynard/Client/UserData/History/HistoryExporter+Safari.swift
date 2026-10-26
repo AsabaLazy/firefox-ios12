@@ -9,55 +9,72 @@ import Darwin
 import Foundation
 
 enum SafariHistoryExporter {
-    static func exportHistory(to fileURL: URL) async throws -> Int {
+    static func exportHistory(
+        to fileURL: URL,
+        cancellation: UserDataCancellation,
+        completion: @escaping (Result<Int, Error>) -> Void
+    ) {
         guard fileURL.isFileURL else {
-            throw CocoaError(.fileWriteUnsupportedScheme)
+            completion(.failure(CocoaError(.fileWriteUnsupportedScheme)))
+            return
         }
-        
+
         guard !fileURL.path.contains("\0") else {
-            throw CocoaError(.fileWriteInvalidFileName)
+            completion(.failure(CocoaError(.fileWriteInvalidFileName)))
+            return
         }
-        
+
         _ = HistoryStore.shared
-        let databaseURL = try HistoryDataStorage.databaseURL()
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
-        let cancellation = UserDataCancellation()
-        let task = Task.detached(priority: .userInitiated) {
-            let hasAccess = fileURL.startAccessingSecurityScopedResource()
-            defer {
-                if hasAccess {
-                    fileURL.stopAccessingSecurityScopedResource()
-                }
-            }
-            
-            let temporaryURL = fileURL.deletingLastPathComponent()
-                .appendingPathComponent(".\(UUID().uuidString).json")
-            defer {
-                try? FileManager.default.removeItem(at: temporaryURL)
-            }
-            
-            let storage = try HistoryDataStorage(databaseURL: databaseURL, cancellation: cancellation)
-            let writer = try SafariHistoryWriter(fileURL: temporaryURL, browserVersion: version)
-            var count = 0
-            try storage.enumerateVisits { record in
-                try writer.append(record)
-                count += 1
-            }
-            try writer.finish()
-            try Task.checkCancellation()
-            
-            guard rename(temporaryURL.path, fileURL.path) == 0 else {
-                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-            }
-            
-            return count
+        let databaseURL: URL
+        do {
+            databaseURL = try HistoryDataStorage.databaseURL()
+        } catch {
+            completion(.failure(error))
+            return
         }
-        
-        return try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            cancellation.cancel()
-            task.cancel()
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let count: Int
+            do {
+                let hasAccess = fileURL.startAccessingSecurityScopedResource()
+                defer {
+                    if hasAccess {
+                        fileURL.stopAccessingSecurityScopedResource()
+                    }
+                }
+
+                let temporaryURL = fileURL.deletingLastPathComponent()
+                    .appendingPathComponent(".\(UUID().uuidString).json")
+                defer {
+                    try? FileManager.default.removeItem(at: temporaryURL)
+                }
+
+                let storage = try HistoryDataStorage(databaseURL: databaseURL, cancellation: cancellation)
+                let writer = try SafariHistoryWriter(fileURL: temporaryURL, browserVersion: version)
+                var exported = 0
+                try storage.enumerateVisits { record in
+                    try writer.append(record)
+                    exported += 1
+                }
+                try writer.finish()
+                try cancellation.checkCancellation()
+
+                guard rename(temporaryURL.path, fileURL.path) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+
+                count = exported
+            } catch {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+                return
+            }
+
+            DispatchQueue.main.async {
+                completion(.success(count))
+            }
         }
     }
 }

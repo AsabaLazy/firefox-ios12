@@ -1038,6 +1038,12 @@ final class AddressBar: UIView {
         guard editingState == .inactive else {
             return
         }
+
+        // command.title is iOS 13+. The hint only fires from the iOS 13+
+        // menu-shortcut flow, so no-op below that.
+        guard #available(iOS 13.0, *) else {
+            return
+        }
         
         var shortcut = ""
         for (modifier, symbol) in [

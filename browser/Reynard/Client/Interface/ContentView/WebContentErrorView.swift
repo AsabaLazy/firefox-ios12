@@ -81,7 +81,7 @@ final class WebContentErrorView: UIView, UITextViewDelegate {
     // MARK: - Configuration
     
     private func configureHierarchy() {
-        backgroundColor = .systemBackground
+        backgroundColor = .appSystemBackground
         clipsToBounds = true
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.scrollsToTop = false
@@ -91,7 +91,7 @@ final class WebContentErrorView: UIView, UITextViewDelegate {
         advancedPanel.axis = .vertical
         advancedPanel.spacing = UX.spacing
         symbolView.contentMode = .left
-        symbolView.tintColor = .label
+        symbolView.tintColor = .appLabel
         titleLabel.font = UIFont(
             descriptor: UIFontDescriptor.preferredFontDescriptor(withTextStyle: .title2)
                 .withSymbolicTraits(.traitBold)!,
@@ -100,7 +100,7 @@ final class WebContentErrorView: UIView, UITextViewDelegate {
         titleLabel.accessibilityTraits.insert(.header)
         
         for label in [titleLabel, errorCodeLabel, technicalLabel] {
-            label.textColor = .label
+            label.textColor = .appLabel
             label.numberOfLines = 0
             label.lineBreakMode = .byWordWrapping
             label.setContentCompressionResistancePriority(.required, for: .vertical)
@@ -119,7 +119,7 @@ final class WebContentErrorView: UIView, UITextViewDelegate {
         messageView.textContainerInset = .zero
         messageView.textContainer.lineFragmentPadding = 0
         messageView.linkTextAttributes = [
-            .foregroundColor: UIColor.label,
+            .foregroundColor: UIColor.appLabel,
             .underlineStyle: NSUnderlineStyle.single.rawValue,
         ]
         messageView.setContentCompressionResistancePriority(.required, for: .vertical)
@@ -127,7 +127,7 @@ final class WebContentErrorView: UIView, UITextViewDelegate {
         
         for button in [primaryButton, advancedButton, continueHTTPButton, advancedBackButton, acceptButton] {
             let isPrimary = button === primaryButton || button === advancedBackButton
-            button.tintColor = .label
+            button.tintColor = .appLabel
             
             if #available(iOS 26.0, *) {
                 var configuration = isPrimary
@@ -139,8 +139,8 @@ final class WebContentErrorView: UIView, UITextViewDelegate {
                 configuration.buttonSize = .large
                 button.configuration = configuration
             } else {
-                button.backgroundColor = isPrimary ? .label : .secondarySystemBackground
-                button.setTitleColor(isPrimary ? .systemBackground : .label, for: .normal)
+                button.backgroundColor = isPrimary ? .appLabel : .appTertiarySystemBackground
+                button.setTitleColor(isPrimary ? .appSystemBackground : .appLabel, for: .normal)
                 button.titleLabel?.font = .preferredFont(forTextStyle: .headline)
                 button.contentEdgeInsets = UIEdgeInsets(
                     top: UX.buttonSpacing,
@@ -164,7 +164,7 @@ final class WebContentErrorView: UIView, UITextViewDelegate {
         continueHTTPButton.setTitle(NSLocalizedString("Continue to HTTP Website", tableName: "WebContentErrorLocalizable", comment: ""), for: .normal)
         acceptButton.setTitle(NSLocalizedString("Accept the Risk and Continue", tableName: "WebContentErrorLocalizable", comment: ""), for: .normal)
         errorCodeLabel.text = NSLocalizedString("Error Code: NS_ERROR_OFFLINE", tableName: "WebContentErrorLocalizable", comment: "")
-        separator.backgroundColor = .separator
+        separator.backgroundColor = .appSeparator
         
         addSubview(scrollView)
         scrollView.addSubview(stack)
@@ -246,8 +246,12 @@ final class WebContentErrorView: UIView, UITextViewDelegate {
             )
         }
         messageView.attributedText = attributedText
-        symbolView.image = content.symbol.flatMap {
-            UIImage(named: $0, in: .main, with: UIImage.SymbolConfiguration(pointSize: UX.symbolSize))
+        symbolView.image = content.symbol.flatMap { name in
+            if #available(iOS 13.0, *) {
+                UIImage(named: name, in: .main, with: UIImage.SymbolConfiguration(pointSize: UX.symbolSize))
+            } else {
+                UIImage(named: name)
+            }
         }
         symbolView.isHidden = content.symbol == nil
         
@@ -273,7 +277,7 @@ final class WebContentErrorView: UIView, UITextViewDelegate {
     private func attributedMessage(_ text: String) -> NSMutableAttributedString {
         let attributed = NSMutableAttributedString(
             string: text,
-            attributes: [.font: messageView.font!, .foregroundColor: UIColor.label]
+            attributes: [.font: messageView.font!, .foregroundColor: UIColor.appLabel]
         )
         
         text.enumerateSubstrings(in: text.startIndex..<text.endIndex, options: .byParagraphs) { paragraph, range, _, _ in

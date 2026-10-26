@@ -23,7 +23,7 @@ final class ExportPreferencesViewController: SettingsTableViewController {
     private var isExporting = false
     
     init() {
-        super.init(style: .insetGrouped)
+        super.init(style: .appGrouped)
         title = NSLocalizedString("Export Browsing Data", comment: "")
     }
     
@@ -76,7 +76,7 @@ final class ExportPreferencesViewController: SettingsTableViewController {
             let isEnabled = !isExporting && !selectedTypes.isEmpty
             let cell = SettingsViewUtils.actionCell(
                 title: NSLocalizedString("Export…", comment: ""),
-                tintColor: isEnabled ? view.tintColor : .tertiaryLabel
+                tintColor: isEnabled ? view.tintColor : .appTertiaryLabel
             )
             cell.textLabel?.textAlignment = .center
             cell.isUserInteractionEnabled = isEnabled
@@ -99,7 +99,15 @@ final class ExportPreferencesViewController: SettingsTableViewController {
             cell.isUserInteractionEnabled = !isExporting
             if selectedTypes.contains(type) {
                 if isExporting {
-                    let spinner = UIActivityIndicatorView(style: .medium)
+                    let spinner: UIActivityIndicatorView = {
+                        if #available(iOS 13.0, *) {
+                            return UIActivityIndicatorView(style: .medium)
+                        } else {
+                            let indicator = UIActivityIndicatorView(style: .gray)
+                            indicator.color = .gray
+                            return indicator
+                        }
+                    }()
                     spinner.startAnimating()
                     cell.accessoryView = spinner
                 } else {
@@ -145,27 +153,34 @@ final class ExportPreferencesViewController: SettingsTableViewController {
     
     private func loadCounts() {
         for (row, type) in UserDataType.allCases.enumerated() {
-            Task { [weak self] in
+            let indexPath = IndexPath(row: row, section: Section.data.rawValue)
+            let update: (Int?) -> Void = { [weak self] count in
                 guard let self else {
                     return
                 }
-                
-                do {
-                    switch type {
-                    case .bookmarks:
-                        self.counts[type] = await BookmarkStore.shared.bookmarkCount()
-                    case .history:
-                        self.counts[type] = await HistoryStore.shared.siteCount()
-                    case .extensions:
-                        self.counts[type] = try await AddonRuntime.shared.list().filter { !$0.isBuiltIn }.count
-                    }
-                } catch {
-                    self.counts[type] = nil
-                }
+
+                self.counts[type] = count
                 self.countErrors[type] = self.counts[type] == nil
                 ? NSLocalizedString("Count unavailable", comment: "")
                 : nil
-                self.tableView.reloadRows(at: [IndexPath(row: row, section: Section.data.rawValue)], with: .none)
+                self.tableView.reloadRows(at: [indexPath], with: .none)
+            }
+
+            switch type {
+            case .bookmarks:
+                BookmarkStore.shared.bookmarkCount(completion: update)
+            case .history:
+                HistoryStore.shared.siteCount(completion: update)
+            case .extensions:
+                AddonRuntime.shared.list { [weak self] result in
+                    switch result {
+                    case .success(let addons):
+                        update(addons.filter { !$0.isBuiltIn }.count)
+                    case .failure:
+                        update(nil)
+                        self?.countErrors[type] = nil
+                    }
+                }
             }
         }
     }
@@ -190,35 +205,51 @@ final class ExportPreferencesViewController: SettingsTableViewController {
         let types = selectedTypes
         isExporting = true
         tableView.reloadSections(IndexSet([Section.data.rawValue, Section.action.rawValue]), with: .none)
-        
-        Task {
+
+        let cancellation = UserDataCancellation()
+        let finish: () -> Void = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+
+                self.isExporting = false
+                self.tableView.reloadSections(IndexSet([Section.data.rawValue, Section.action.rawValue]), with: .none)
+            }
+        }
+
+        ImportExportProgressAlert.run(
+            from: self,
+            message: NSLocalizedString("Exporting in progress…", comment: "")
+        ) { done in
             let hasAccess = directoryURL.startAccessingSecurityScopedResource()
-            defer {
+            let fileURL = directoryURL.appendingPathComponent(UserDataExporter.archiveFileName)
+            UserDataExporter.exportData(to: fileURL, types: types, cancellation: cancellation) { result in
                 if hasAccess {
                     directoryURL.stopAccessingSecurityScopedResource()
                 }
-                isExporting = false
-                tableView.reloadSections(IndexSet([Section.data.rawValue, Section.action.rawValue]), with: .none)
-            }
-            
-            do {
-                _ = try await ImportExportProgressAlert.run(
-                    from: self,
-                    message: NSLocalizedString("Exporting in progress…", comment: "")
-                ) {
-                    let fileURL = directoryURL.appendingPathComponent(UserDataExporter.archiveFileName)
-                    return try await UserDataExporter.exportData(to: fileURL, types: types)
+                switch result {
+                case .success:
+                    done(.success(()))
+                case .failure(let error):
+                    done(.failure(error))
                 }
+            }
+        } completion: { [weak self] result in
+            finish()
+            switch result {
+            case .success:
                 AlertPresenter.show(
                     title: NSLocalizedString("Export Complete", comment: ""),
                     message: NSLocalizedString("Your data has been exported.", comment: "")
                 )
-            } catch {
+            case .failure(let error):
                 AlertPresenter.show(
                     title: NSLocalizedString("Export Failed", comment: ""),
                     message: ImportExportViewUtils.exportErrorMessage(for: error)
                 )
             }
+            _ = self
         }
     }
 }

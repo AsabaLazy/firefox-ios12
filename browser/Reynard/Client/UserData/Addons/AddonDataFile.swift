@@ -13,7 +13,7 @@ nonisolated enum AddonDataFile {
         var issues: [AddonImportIssue] = []
     }
     
-    static func read(from fileURL: URL) throws -> Document {
+    static func read(from fileURL: URL, cancellation: UserDataCancellation) throws -> Document {
         guard fileURL.isFileURL else {
             throw CocoaError(.fileReadUnsupportedScheme)
         }
@@ -29,7 +29,7 @@ nonisolated enum AddonDataFile {
             }
         }
         
-        try Task.checkCancellation()
+        try cancellation.checkCancellation()
         let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let metadata = root["metadata"] as? [String: Any],
@@ -37,7 +37,7 @@ nonisolated enum AddonDataFile {
             throw AddonDataError.invalidFile
         }
         
-        try rejectDuplicateKeys(in: data)
+        try rejectDuplicateKeys(in: data, cancellation: cancellation)
         let decoder = JSONDecoder()
         let header = try decoder.decode(
             AddonDataMetadata.self, from: JSONSerialization.data(withJSONObject: metadata)
@@ -54,7 +54,7 @@ nonisolated enum AddonDataFile {
         
         var document = Document()
         for (id, value) in extensions.sorted(by: { $0.key < $1.key }) {
-            try Task.checkCancellation()
+            try cancellation.checkCancellation()
             do {
                 guard isValidID(id), let object = value as? [String: Any] else {
                     throw AddonDataError.invalidFile
@@ -78,7 +78,7 @@ nonisolated enum AddonDataFile {
         return value.range(of: pattern, options: .regularExpression) == (value.startIndex..<value.endIndex)
     }
     
-    private static func rejectDuplicateKeys(in data: Data) throws {
+    private static func rejectDuplicateKeys(in data: Data, cancellation: UserDataCancellation) throws {
         guard let text = String(data: data, encoding: .utf8) else {
             throw AddonDataError.invalidFile
         }
@@ -88,7 +88,7 @@ nonisolated enum AddonDataFile {
         var index = 0
         let decoder = JSONDecoder()
         while index < bytes.count {
-            try Task.checkCancellation()
+            try cancellation.checkCancellation()
             switch bytes[index] {
             case 0x7B: // {
                 objects.append([])

@@ -42,7 +42,7 @@ final class ImportPreferencesViewController: SettingsTableViewController {
     }
     
     init() {
-        super.init(style: .insetGrouped)
+        super.init(style: .appGrouped)
         title = NSLocalizedString("Import Browsing Data", comment: "")
     }
     
@@ -108,7 +108,15 @@ final class ImportPreferencesViewController: SettingsTableViewController {
             cell.imageView?.tintColor = view.tintColor
             cell.selectionStyle = .none
             if isImporting {
-                let spinner = UIActivityIndicatorView(style: .medium)
+                let spinner: UIActivityIndicatorView = {
+                    if #available(iOS 13.0, *) {
+                        return UIActivityIndicatorView(style: .medium)
+                    } else {
+                        let indicator = UIActivityIndicatorView(style: .gray)
+                        indicator.color = .gray
+                        return indicator
+                    }
+                }()
                 spinner.startAnimating()
                 cell.accessoryView = spinner
             } else {
@@ -133,7 +141,7 @@ final class ImportPreferencesViewController: SettingsTableViewController {
             
             let canImport = selectedFileURL != nil && !hasStartedImport
             let isEnabled = !isImporting && (row == .chooseFile || canImport)
-            let cell = SettingsViewUtils.actionCell(title: title, tintColor: isEnabled ? view.tintColor : .tertiaryLabel)
+            let cell = SettingsViewUtils.actionCell(title: title, tintColor: isEnabled ? view.tintColor : .appTertiaryLabel)
             cell.textLabel?.textAlignment = .center
             cell.isUserInteractionEnabled = isEnabled
             if !isEnabled {
@@ -164,91 +172,103 @@ final class ImportPreferencesViewController: SettingsTableViewController {
             }
             
             isImporting = true
-            Task {
-                await importData(from: selectedFileURL)
-            }
+            importData(from: selectedFileURL)
         }
     }
     
-    private func updateSections(_ changes: @escaping () -> Void) async {
+    private func updateSections(_ changes: @escaping () -> Void, completion: (() -> Void)? = nil) {
         tableView.isUserInteractionEnabled = false
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async {
-                let previousSections = self.displayedSections
-                let previousImportTypes = self.importTypes
-                self.tableView.performBatchUpdates {
-                    changes()
-                    let updatedSections = self.displayedSections
-                    let deletedSections = previousSections.indices.filter { !updatedSections.contains(previousSections[$0]) }
-                    let insertedSections = updatedSections.indices.filter { !previousSections.contains(updatedSections[$0]) }
-                    self.tableView.deleteSections(IndexSet(deletedSections), with: .fade)
-                    self.tableView.insertSections(IndexSet(insertedSections), with: .fade)
-                    
-                    if previousSections.contains(.data),
-                       let section = updatedSections.firstIndex(of: .data) {
-                        let insertedRows = self.importTypes.enumerated().compactMap { index, type in
-                            return previousImportTypes.contains(type) ? nil : IndexPath(row: index, section: section)
-                        }
-                        self.tableView.insertRows(at: insertedRows, with: .automatic)
+        DispatchQueue.main.async {
+            let previousSections = self.displayedSections
+            let previousImportTypes = self.importTypes
+            self.tableView.performBatchUpdates {
+                changes()
+                let updatedSections = self.displayedSections
+                let deletedSections = previousSections.indices.filter { !updatedSections.contains(previousSections[$0]) }
+                let insertedSections = updatedSections.indices.filter { !previousSections.contains(updatedSections[$0]) }
+                self.tableView.deleteSections(IndexSet(deletedSections), with: .fade)
+                self.tableView.insertSections(IndexSet(insertedSections), with: .fade)
+
+                if previousSections.contains(.data),
+                   let section = updatedSections.firstIndex(of: .data) {
+                    let insertedRows = self.importTypes.enumerated().compactMap { index, type in
+                        return previousImportTypes.contains(type) ? nil : IndexPath(row: index, section: section)
                     }
-                } completion: { _ in
-                    self.tableView.reloadData()
-                    self.tableView.isUserInteractionEnabled = true
-                    continuation.resume()
+                    self.tableView.insertRows(at: insertedRows, with: .automatic)
                 }
+            } completion: { _ in
+                self.tableView.reloadData()
+                self.tableView.isUserInteractionEnabled = true
+                completion?()
             }
         }
     }
-    
-    private func showImportType(_ type: UserDataType) async {
+
+    private func showImportType(_ type: UserDataType) {
         guard !importTypes.contains(type) else {
             return
         }
-        
-        await updateSections {
+
+        updateSections {
             self.importTypes = UserDataType.allCases.filter { self.importTypes.contains($0) || $0 == type }
         }
     }
-    
-    private func importData(from fileURL: URL) async {
-        var summary = ImportDataSummary()
-        var failureMessage: String?
-        do {
-            let report = try await ImportExportProgressAlert.run(
-                from: self,
-                message: NSLocalizedString("Importing in progress…", comment: "")
-            ) {
-                await self.updateSections {
-                    self.hasStartedImport = true
+
+    private func importData(from fileURL: URL) {
+        let cancellation = UserDataCancellation()
+        ImportExportProgressAlert.run(
+            from: self,
+            message: NSLocalizedString("Importing in progress…", comment: "")
+        ) { done in
+            self.updateSections({
+                self.hasStartedImport = true
+            }) {
+                UserDataImporter.importData(from: fileURL, onTypeDetected: { type in
+                    self.showImportType(type)
+                }, cancellation: cancellation) { result in
+                    switch result {
+                    case .success(let report):
+                        var summary = ImportDataSummary()
+                        for result in report.results {
+                            summary.record(result)
+                        }
+                        done(.success(summary))
+                    case .failure(let error):
+                        done(.failure(error))
+                    }
                 }
-                return try await UserDataImporter.importData(from: fileURL) { type in
-                    await self.showImportType(type)
+            }
+        } completion: { [weak self] result in
+            guard let self else {
+                return
+            }
+
+            let summary: ImportDataSummary
+            let failureMessage: String?
+            switch result {
+            case .success(let imported):
+                summary = imported
+                failureMessage = summary.issues.isEmpty ? nil : summary.issues.joined(separator: "\n\n")
+            case .failure(let error):
+                summary = ImportDataSummary()
+                failureMessage = error.localizedDescription
+            }
+
+            self.updateSections({
+                self.importSummary = summary
+                self.isImporting = false
+            }) {
+                if let failureMessage {
+                    AlertPresenter.show(title: NSLocalizedString("Import Failed", comment: ""), message: failureMessage)
+                } else {
+                    AlertPresenter.show(
+                        title: NSLocalizedString("Import Complete", comment: ""),
+                        message: summary.hasImportedData
+                        ? NSLocalizedString("Your data has been imported.", comment: "")
+                        : NSLocalizedString("No data was imported.", comment: "")
+                    )
                 }
             }
-            for result in report.results {
-                summary.record(result)
-            }
-            if !summary.issues.isEmpty {
-                failureMessage = summary.issues.joined(separator: "\n\n")
-            }
-        } catch {
-            failureMessage = error.localizedDescription
-        }
-        
-        await updateSections {
-            self.importSummary = summary
-            self.isImporting = false
-        }
-        
-        if let failureMessage {
-            AlertPresenter.show(title: NSLocalizedString("Import Failed", comment: ""), message: failureMessage)
-        } else {
-            AlertPresenter.show(
-                title: NSLocalizedString("Import Complete", comment: ""),
-                message: summary.hasImportedData
-                ? NSLocalizedString("Your data has been imported.", comment: "")
-                : NSLocalizedString("No data was imported.", comment: "")
-            )
         }
     }
     
@@ -264,7 +284,9 @@ final class ImportPreferencesViewController: SettingsTableViewController {
         }
         picker.delegate = self
         picker.allowsMultipleSelection = false
-        picker.shouldShowFileExtensions = true
+        if #available(iOS 13.0, *) {
+            picker.shouldShowFileExtensions = true
+        }
         present(picker, animated: true)
     }
 }
@@ -276,14 +298,12 @@ extension ImportPreferencesViewController: UIDocumentPickerDelegate {
         }
         
         let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
-        Task {
-            await updateSections {
-                self.selectedFileURL = fileURL
-                self.selectedFileSize = size.map(Int64.init)
-                self.importTypes = []
-                self.hasStartedImport = false
-                self.importSummary = ImportDataSummary()
-            }
+        updateSections {
+            self.selectedFileURL = fileURL
+            self.selectedFileSize = size.map(Int64.init)
+            self.importTypes = []
+            self.hasStartedImport = false
+            self.importSummary = ImportDataSummary()
         }
     }
 }

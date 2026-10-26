@@ -44,7 +44,8 @@ nonisolated final class UserDataFileWriter {
             
             var offset = 0
             while offset < bytes.count {
-                try Task.checkCancellation()
+                // No Task.checkCancellation here (no Concurrency on iOS 12);
+                // callers check the UserDataCancellation flag between chunks.
                 let written = stream.write(start.advanced(by: offset), maxLength: bytes.count - offset)
                 guard written > 0 else {
                     throw stream.streamError ?? CocoaError(.fileWriteUnknown)

@@ -14,7 +14,7 @@ nonisolated enum BookmarkHTMLParser {
         let isReadingList: Bool
     }
     
-    static func parse(fileURL: URL, requiresExportMetadata: Bool = false) throws -> BookmarkHTMLDocument {
+    static func parse(fileURL: URL, requiresExportMetadata: Bool = false, cancellation: UserDataCancellation) throws -> BookmarkHTMLDocument {
         let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
         guard !data.isEmpty else {
             throw BookmarkDataError.unrecognizedFormat
@@ -68,7 +68,7 @@ nonisolated enum BookmarkHTMLParser {
         var node = xmlDocGetRootElement(document)
         
         while let element = node {
-            try Task.checkCancellation()
+            try cancellation.checkCancellation()
             let name = String(cString: element.pointee.name).lowercased()
             
             if element.pointee.type == XML_ELEMENT_NODE {

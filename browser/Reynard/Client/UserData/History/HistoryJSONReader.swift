@@ -9,16 +9,18 @@ import Foundation
 
 nonisolated final class HistoryJSONReader {
     private let stream: InputStream
+    private let cancellation: UserDataCancellation
     private var buffer = [UInt8](repeating: 0, count: 65_536)
     private var offset = 0
     private var length = 0
-    
-    init(fileURL: URL) throws {
+
+    init(fileURL: URL, cancellation: UserDataCancellation) throws {
         guard fileURL.isFileURL, let stream = InputStream(url: fileURL) else {
             throw CocoaError(.fileReadUnsupportedScheme)
         }
-        
+
         self.stream = stream
+        self.cancellation = cancellation
         stream.open()
     }
     
@@ -34,7 +36,7 @@ nonisolated final class HistoryJSONReader {
         var seenKeys = Set<String>()
         if try peek() != 0x7D { // }
             while true {
-                try Task.checkCancellation()
+                try cancellation.checkCancellation()
                 guard let key = try jsonValue(value()) as? String, seenKeys.insert(key).inserted else {
                     throw HistoryDataError.invalidJSON
                 }
@@ -140,7 +142,7 @@ nonisolated final class HistoryJSONReader {
         try expect(0x5B) // [
         if try peek() != 0x5D { // ]
             while true {
-                try Task.checkCancellation()
+                try cancellation.checkCancellation()
                 try autoreleasepool {
                     let data = try value()
                     _ = try jsonValue(data)
@@ -250,7 +252,7 @@ nonisolated final class HistoryJSONReader {
     
     private func rawByte() throws -> UInt8? {
         if offset == length {
-            try Task.checkCancellation()
+            try cancellation.checkCancellation()
             let capacity = buffer.count
             length = stream.read(&buffer, maxLength: capacity)
             offset = 0

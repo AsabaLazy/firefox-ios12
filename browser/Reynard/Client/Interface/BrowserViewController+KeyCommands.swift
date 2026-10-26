@@ -10,6 +10,11 @@ import UIKit
 
 extension BrowserViewController: GeckoViewKeyCommandDelegate {
     func keyCommand(forInput input: String, modifierFlags: UIKeyModifierFlags) -> UIKeyCommand? {
+        // ApplicationMenuBuilder is iOS 13+ (UIMenu). No menu shortcuts on 12.
+        guard #available(iOS 13.0, *) else {
+            return nil
+        }
+
         let modifiers = modifierFlags.intersection([.command, .control, .alternate, .shift])
         guard let command = ApplicationMenuBuilder.keyCommands.first(where: {
             guard $0.modifierFlags == modifiers else {

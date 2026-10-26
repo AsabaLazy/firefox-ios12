@@ -15,31 +15,22 @@ enum ImportExportProgressAlert {
     static func run<Value>(
         from presenter: UIViewController,
         message: String,
-        operation: () async throws -> Value
-    ) async throws -> Value {
+        operation: @escaping (@escaping (Result<Value, Error>) -> Void) -> Void,
+        completion: @escaping (Result<Value, Error>) -> Void
+    ) {
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
-        alert.isModalInPresentation = true
-        
-        await withCheckedContinuation { continuation in
-            presenter.present(alert, animated: true) {
-                installActivityIndicator(in: alert)
-                continuation.resume()
+        if #available(iOS 13.0, *) {
+            alert.isModalInPresentation = true
+        }
+
+        presenter.present(alert, animated: true) {
+            installActivityIndicator(in: alert)
+            operation { result in
+                alert.dismiss(animated: true) {
+                    completion(result)
+                }
             }
         }
-        
-        let result: Result<Value, Error>
-        do {
-            result = .success(try await operation())
-        } catch {
-            result = .failure(error)
-        }
-        
-        await withCheckedContinuation { continuation in
-            alert.dismiss(animated: true) {
-                continuation.resume()
-            }
-        }
-        return try result.get()
     }
     
     private static func installActivityIndicator(in alert: UIAlertController) {
@@ -48,7 +39,15 @@ enum ImportExportProgressAlert {
             return
         }
         
-        let spinner = UIActivityIndicatorView(style: .medium)
+        let spinner: UIActivityIndicatorView = {
+            if #available(iOS 13.0, *) {
+                return UIActivityIndicatorView(style: .medium)
+            } else {
+                let indicator = UIActivityIndicatorView(style: .gray)
+                indicator.color = .gray
+                return indicator
+            }
+        }()
         spinner.setContentCompressionResistancePriority(.required, for: .horizontal)
         spinner.startAnimating()
         

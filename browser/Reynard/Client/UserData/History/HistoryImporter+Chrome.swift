@@ -10,15 +10,19 @@ import Foundation
 enum ChromeHistoryImporter {
     static func importHistory(
         from fileURL: URL,
-        nearDuplicateToleranceSeconds: Int = 1
-    ) async throws -> HistoryImportReport {
-        return try await HistoryImporter.importHistory(
+        nearDuplicateToleranceSeconds: Int = 1,
+        cancellation: UserDataCancellation,
+        completion: @escaping (Result<HistoryImportReport, Error>) -> Void
+    ) {
+        HistoryImporter.importHistory(
             from: fileURL,
             format: .chrome,
             nearDuplicateToleranceSeconds: nearDuplicateToleranceSeconds,
             decodeRecord: { decoder, data in
                 try decoder.decode(ChromeHistoryRecord.self, from: data).visit
-            }
+            },
+            cancellation: cancellation,
+            completion: completion
         )
     }
 }

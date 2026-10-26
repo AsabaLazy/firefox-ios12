@@ -38,7 +38,15 @@ final class FavoriteFolderCollectionViewCell: UICollectionViewCell {
     )
     
     private let folderBackgroundView: UIVisualEffectView = {
-        let view = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+        // systemChromeMaterial is iOS 13+; on iOS 12 use no blur effect
+        // (backdrop blur costs a full-screen resample per frame on the A7).
+        let effect: UIBlurEffect? = {
+            if #available(iOS 13.0, *) {
+                return UIBlurEffect(style: .systemChromeMaterial)
+            }
+            return nil
+        }()
+        let view = UIVisualEffectView(effect: effect)
         view.translatesAutoresizingMaskIntoConstraints = false
         view.backgroundColor = .appSystemGray5
         view.layer.applyContinuousCornerCurve()

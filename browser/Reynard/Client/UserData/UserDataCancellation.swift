@@ -7,6 +7,10 @@
 
 import Foundation
 
+// iOS 12 has no Swift Concurrency (and no CancellationError): cancellation
+// surfaces as this plain error instead.
+struct UserDataCancelledError: Error {}
+
 nonisolated final class UserDataCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
@@ -28,7 +32,7 @@ nonisolated final class UserDataCancellation: @unchecked Sendable {
     
     func checkCancellation() throws {
         if isCancelled {
-            throw CancellationError()
+            throw UserDataCancelledError()
         }
     }
 }
