@@ -298,3 +298,57 @@
   `libswift_Concurrency`。jemalloc 包 `libmozglue.dylib` 含 `<jemalloc>`/`MALLOC_OPTIONS`/
   `jemalloc_stats_*`，nojemalloc 包这些全无（只剩转发系统 malloc 的 `moz_arena_*`），两包
   确实不同（IPA 132729412 vs 132673324 字节）。真机装机待测。
+
+
+## 上游合并实录（分支 `merge/upstream-0.19.0`，上游 a3315eb→24a99b7 共 73 提交：0.19.0）
+
+- 范围：0.16.0→0.19.0 四个小版本、引擎 156.0.1→**158.0.1**（157/157.0.1/158/158.0.1
+  四连跳，submodule 19a9005→9378fbc）、App 侧全面 async 化（Prompt/Navigation/
+  GeckoSession/History/Bookmark/UniversalLink 全改 `async + @MainActor`）。
+  `git merge-tree` 预演 60 个双方都动的文件：31 冲突 + 29 自动合并；实际解决
+  34 个（含 2 个 modify/delete 与 2 个 both-added patch）。
+- App 侧解法（iOS 12 优先，一律 completion 回 port、零 Concurrency）：
+  xcconfig 取 0.19.0 保 12.0+clang_rt；Helper 取 DispatchQueue 版；JITController
+  合体（上游 DDI 守卫 + 我方主进程 ptrace 同步块 + bundle id 保留）；
+  ApplicationMenuBuilder 取新 commands 结构 + 保包名前缀；Navigation/Prompt/
+  GeckoSession/AddonCoordinator/TabManagerImpl 保 completion 签名、上游 sync
+  新功能（onLoadError 错误页、`dismissSoftwareKeyboard`、import hook）原样收进；
+  AddressBar 合并 error-state 重构 + keyCommandHint（13 门内）；
+  WebContentView 合并 contentContainerView + errorView，下缩略图保留 672px 上限
+  （layer.render 改渲 container）；SelectionActionMenuHostView 取 UITextView 基类
+  +UIEditMenu（16 门）+UIMenuController iOS 12 回退；ContextMenu 取 MenuInteraction
+  子类（13 门实例化）+ImagePreviewLoader 改走 Gecko 取图（completion 化）；
+  FavoriteFolder 兼容 blur（12 回退无特效）+cornerCurve shim；`remove PiP`
+  接受上游删除（delegate/coordinator/引擎 patch 全删）。
+- 引擎侧解法（pristine sparse-checkout 重建，详见本轮新增校验）：
+  mobile.js/ProcExecMem/IOSBootstrap/ScreenHelper/nsDocShell/nsHttpHandler/
+  VTDecoder/device_info 全过 `apply --check`（158.0.1 pristine）；
+  NativeLayerCA/VTEncoder/TextInput/nsWindow/GeckoEditableSupport(.h/.mm)/
+  GeckoTouchSupport 走 scratch 重建（上游 patch + 移植 iOS 12 hunks 再重生成）。
+  要点：JIT 容量重构（2044MiB→1024MiB fallback）保留，但 XP_IOS 改走 **140MB
+  直接预留**（A7 实测 512 OK/1GB ENOMEM，Ion 稳态靠它）+ EINVAL-hint 重试保留；
+  VTEncoder 上游的版本门禁会禁掉 iOS 12 全路径，改回 nil-safe 弱链接检查；
+  TextInput/Editable/GeckoTouch 上游 157/158 已删源文件改走自有重写，
+  caret 菜单旧 hack 整体退役（新架构自带），interactionAssistant（15+）集中
+  `reynard_interactionAssistantOrNil` 守卫（22 处，nil 消息安全已逐点核对），
+  文本菜单 show/hideMenuFromView 加 13 回退，setupTextInput 加
+  textInteractionForMode 守卫；nsWindow 仅 nil-guard + DismissSoftwareKeyboard
+  保留，其余（SafeArea/Passwords/Autofill/RetainedLayer/NativeTextInput 管线）
+  均已被上游吸收。
+- DataManagement import/export 整套（35 新文件）`async→completion` 回 port：
+  UserDataCancellation 加自有取消 error；store 层改 completion；importer/
+  exporter/exporter-alert 全改 GCD + cancellation 透传（UserDataImporter/
+  Exporter 递归链、AddonImporter 分步恢复链、Catalog 分页抓取链）；
+  校验页 WebContentErrorView、keyCommandHint、Import/Export UI 全套 UICompat
+  shim（label/systemBackground/separator/medium/insetGrouped/tertiaryLabel/
+  QLThumbnail→占位图标/shouldShowFileExtensions 门）。
+- `check-ios12.sh` 本轮改动（已落仓库）：ZIPFoundation 0.9.20 按 tag 抓取并预编
+  swiftmodule（`-I` 传给 Reynard target，min iOS 9 可编）；WebRequestErrorBridge.mm
+  因需 objdir 生成头（nsError.h）加入 skip（同 GeckoRuntimeBridge.mm 惯例）；
+  另：15 个上游新 symbolset 已转 imageset（`generate-ios12-icons.py`，0 残留）。
+- 校验：`check-ios12.sh <merge-base>` 从 261 error 修到 **result: PASS**
+  （4 target 零错误、无 Concurrency 引用、ObjC 零 unguarded、资源全对上）。
+  注意：engine patch 的 availdb 扫描在合并提交前 diff 的是旧 HEAD，
+  44 条候选多为误报/已守卫；真正的可用性守卫已在重建时逐项确认（见上）。
+- 待后续（进 main 前）：分支 dispatch **nojemalloc** 只跑编译检查；
+  真机装机（bench RUNS + otool minos + RSS）结论回填到此。

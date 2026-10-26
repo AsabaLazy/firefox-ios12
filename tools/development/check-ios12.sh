@@ -82,6 +82,26 @@ else
 	PLATFORM_FLAGS=(-resource-dir "$RES" -I "$RES/shims" -Xfrontend -disable-legacy-type-info)
 fi
 
+# --- ZIPFoundation (SwiftPM dep for import/export; min iOS 9, safe) ---------
+# Upstream pins weichsel/ZIPFoundation 0.9.20 (exact). xcodebuild resolves the
+# SwiftPM package itself; this check compiles with raw swiftc, so prebuild the
+# module once per cache and pass it to targets that import it.
+ZIPF_TAG="0.9.20"
+ZIPF="$CACHE/zipfoundation-$ZIPF_TAG"
+ZIPMODS="$CACHE/zipmods-$SWIFT_VERSION"
+if [ ! -f "$ZIPMODS/ZIPFoundation.swiftmodule" ]; then
+	rm -rf "$ZIPF"
+	git init -q "$ZIPF"
+	git -C "$ZIPF" remote add origin https://github.com/weichsel/ZIPFoundation.git
+	git -C "$ZIPF" fetch -q --depth 1 origin tag "$ZIPF_TAG" || exit 1
+	git -C "$ZIPF" checkout -q FETCH_HEAD || exit 1
+	mkdir -p "$ZIPMODS"
+	"${SWIFTC[@]}" -target arm64-apple-ios12.0 -sdk "$SDK" ${PLATFORM_FLAGS[@]+"${PLATFORM_FLAGS[@]}"} -swift-version 5 \
+		-O -parse-as-library -module-name ZIPFoundation \
+		-emit-module -emit-module-path "$ZIPMODS/ZIPFoundation.swiftmodule" \
+		"$ZIPF"/Sources/ZIPFoundation/*.swift || exit 1
+fi
+
 # --- Gecko exported headers (patched) --------------------------------------
 TAG="$(tr -d '\r\n ' < "$ROOT/engine/release.txt")"
 if [ ! -f "$GECKO/.tag" ] || [ "$(cat "$GECKO/.tag")" != "$TAG" ]; then
@@ -121,7 +141,7 @@ swift_target GeckoView -module-name GeckoView -parse-as-library -application-ext
 	-import-objc-header "$BRIDGE" -emit-module -emit-module-path "$OUT/mods/GeckoView.swiftmodule" \
 	-c -o "$OUT/GeckoView.o" "${GV[@]}"
 RY=(); while IFS= read -r f; do RY+=("$f"); done < <(list_swift "$B/Reynard")
-swift_target Reynard -module-name Reynard -I "$OUT/mods" -enable-upcoming-feature MemberImportVisibility \
+swift_target Reynard -module-name Reynard -I "$OUT/mods" -I "$ZIPMODS" -enable-upcoming-feature MemberImportVisibility \
 	-import-objc-header "$BRIDGE" -c -o "$OUT/Reynard.o" "${RY[@]}"
 OI=(); while IFS= read -r f; do OI+=("$f"); done < <(list_swift "$B/Extensions")
 swift_target OpenIn -module-name OpenIn -parse-as-library -application-extension -c -o "$OUT/OpenIn.o" "${OI[@]}"
@@ -140,7 +160,8 @@ echo "== ObjC/C availability"
 INC=(); for d in $(find "$B" -name "*.h" -exec dirname {} \; | sort -u); do INC+=("-I$d"); done
 while IFS= read -r f; do
 	# GeckoRuntimeBridge.mm needs the Gecko objdir (mozilla-config.h); skipped.
-	grep -q "mozilla-config.h" "$f" && { echo "skip (needs objdir): ${f#$ROOT/}"; continue; }
+	# WebRequestErrorBridge.mm needs generated dist headers (nsError.h); skipped.
+	grep -q "mozilla-config.h\|nsError.h" "$f" && { echo "skip (needs objdir): ${f#$ROOT/}"; continue; }
 	"${CLANG[@]}" -fsyntax-only -target arm64-apple-ios12.0 -isysroot "$SDK" -fobjc-arc -fmodules \
 		-fmodules-cache-path="$CACHE/clang-mc" -Wunguarded-availability -Wunguarded-availability-new \
 		-Wno-nullability-completeness -I"$CACHE/dist/include" -I"$CACHE/dist/include/GeckoView" "${INC[@]}" \
