@@ -396,3 +396,18 @@
   修：从 xcconfig 删掉该行（自有 target 走 target 级，行为零变化；
   `OTHER_LDFLAGS` 等 `-I/-L` 泄漏对静态包无害，留着不动）。
   `check-ios12.sh` 不读 xcconfig（显式传 `-import-objc-header`），重跑仍 PASS。
+- **同日真机首启动 dyld 崩：`_OBJC_CLASS_$__UIContextMenuStyle` 找不到**：
+  0.19.0 包（戳 2372347）装上 iPhone 5s 点开即 `EXC_CRASH (SIGABRT)`，
+  `Termination Description: DYLD, Symbol not found: _OBJC_CLASS_$__UIContextMenuStyle,
+  Referenced from: Reynard, Expected in: UIKit`。根因：上游新增
+  `UIKit+Private.h` 前向声明私有类 `_UIContextMenuStyle`（13+）时没写
+  `API_AVAILABLE`，Swift 侧虽在 `@available(iOS 13.0,*)` 扩展里用
+  （`ContextMenuCoordinator.styleForMenuWithConfiguration`），编译器仍按
+  "全版本可用" 强链接该类符号，12 上 dyld 启动即杀。修：声明处加
+  `API_AVAILABLE(ios(13.0))`（同文件 `UISheetPresentationControllerDetent`
+  15.0 注解的既有写法），用点已在 13 门内，弱链接后 12 直接无此符号引用。
+  教训：**`check-ios12.sh` 只编出 `.o` 不链接，强链接类 bug congenitally
+  漏网**——今后合并凡见桥接头新增前向声明（`@interface _UI…` 私有类），必须
+  逐个补 `API_AVAILABLE` 并真机冷启验证，不能只信 PASS。另：`UIMenuElement
+  (ReaderSettings)` 分类是自有代码编进包，运行时动态派发 + 调用点已有
+  `responds(to:)` 守卫，无碍，不动。

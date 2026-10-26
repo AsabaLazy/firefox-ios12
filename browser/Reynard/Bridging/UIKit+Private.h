@@ -15,6 +15,7 @@ typedef struct {
     NSInteger gravity;
 } ContextMenuAnchor;
 
+API_AVAILABLE(ios(13.0))
 @interface _UIContextMenuStyle : NSObject
 + (nonnull instancetype)defaultStyle;
 @property(nonatomic) ContextMenuAnchor _preferredAnchor;
