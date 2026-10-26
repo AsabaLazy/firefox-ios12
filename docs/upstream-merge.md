@@ -385,3 +385,14 @@
   mPreparingBackwardDeletionSelection/mSelectionAffinity`，头 `+1,178`→`+1,176`，
   工作树同步删并逐字节对过。教训：整文件重建 patch 入库前必须把成员名
   `sort | uniq -d` 过一遍，编译器要到 34 分钟后才报，贵。
+- **同日 archive 首挂：`-xcconfig` 把桥接头漏进 SPM 包**：0.19.0 上游引入
+  ZIPFoundation（SwiftPM）后第一次真 archive，卡在
+  `Build input file cannot be found: '.../checkouts/ZIPFoundation/Reynard/
+  Bridging/Reynard-Bridging-Header.h' (in target 'ZIPFoundation')`。
+  根因：`build-app.sh` 传的 `-xcconfig dist/Reynard.xcconfig` 对全工程所有
+  target 生效（含 SPM 包），而 `Reynard.xcconfig` 里的
+  `SWIFT_OBJC_BRIDGING_HEADER` 一行对自有 target 全系冗余（6 处 target 级已设
+  同值，OpenIn 设空）——它唯一的作用就是污染包 target（包的 SRCROOT 下无此文件）。
+  修：从 xcconfig 删掉该行（自有 target 走 target 级，行为零变化；
+  `OTHER_LDFLAGS` 等 `-I/-L` 泄漏对静态包无害，留着不动）。
+  `check-ios12.sh` 不读 xcconfig（显式传 `-import-objc-header`），重跑仍 PASS。
