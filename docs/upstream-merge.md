@@ -446,3 +446,23 @@
   出路：用户把 .53 代理开起来，或 iPhone 关 WiFi 代理后重测。另记：
   `utun0` 只是 iMessage IDS 隧道，无害；本次还顺手确认了新代理码能正确读出
   系统代理（0.19.0 功能点本身是好的）。
+- **0.19.0 真机装机验证（2026-10-26 夜，iPhone 5s/12.5.8，包
+  `dist/Reynard-Jailbroken.ipa` 戳 2176816，备份在仓库外
+  `reynard-ipa-backups/Reynard-Jailbroken-0.19.0-2176816.ipa`）**：
+  主二进制/XUL/dylib/appex 全 `minos 12.0`，戳与 HEAD 一致，`appinst` WiFi
+  装机成功。冷启 90 秒后主进程 0.0~0.2% idle（自递归修好，无 spin）、RSS
+  ~105~130MB，Helper ~20MB；主页（收藏/favicon/常访）渲染正常；
+  `about:config` 完整渲染（引擎内容管线通）；包内 bench 三次
+  `RUNS[75,67,67,67]/[74,68,68,66]/[73,68,69,73]` 均为 Ion 稳态 warmup 形状
+  （与 0.14.0 的 `[75,68,66,66]` 同族，JIT 在 158 上正常）。
+  坑位：① file:// 首载极慢——冷机首次内容绘制要 60 秒以上（0% CPU 干等闪存），
+  35 秒截图必白屏误判，结论以"放暖后再测"为准（同包二次即出）；② cycript
+  同步调 `textFieldShouldReturn:` 与主线程死锁（必改 `performSelector:afterDelay:`
+  异步，调完立刻返回）；`setText` 长 URL 本身无害，早前"卡死"实为撞上自递归
+  转的主线程饱和。③ 本机无 `debugserver12`（`/usr/local/bin` 都没有），真机
+  采样靠机上自带 `spindump <pid> -file`（10 秒，500 采样，主线程 9.685 秒即定罪），
+  再拿本地同 UUID 的 XUL `atos -l <机上基址>` 解符号——这条链路比 lldb 轻，
+  无 USB 也能走 WiFi。待后续：http 外网（等用户修 .53 代理或关 WiFi 代理后重测
+  example.com，当前 direct 档下报 unknownHost，DNS 一节还没闭环）；收藏点按
+  是否进后台标签（用户待看 □ 标签页）；Helper 间歇崩（Renderer/GLEngine，
+  主进程无碍，appex 无 GPU 可用意料之中，另案）。
