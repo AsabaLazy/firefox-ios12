@@ -545,3 +545,9 @@
   未达回归实锤）。已装回 0.19-Release（T+50s 主页全绘、1.7% idle 可点）。
   如真冷 Release 下仍觉 0.19 慢，再做 4 连发全覆盖 A/B；否则此案以“日常用 Release、
   Debug 只做开发”关闭。
+- **0.19.0 发版（2026-10-27 02:0x，手动合 main + dispatch，不手传资产）**：
+  `check-ios12.sh e9e75da0` PASS → `merge/upstream-0.19.0` 合进 main（`789e5f51`，
+  已推）→ 手动 dispatch sync（run 40374073167）。Gecko 约 3~3.5h → 建
+  `0.19.0-ios12` release → nojemalloc 按 release-job 条件自动连锁再约 3h。
+  注：本地 dist 包带 http 探针、且只有 jemalloc，故不手发；用户要的“懒”=
+  dispatch 一下，CI 全包。
