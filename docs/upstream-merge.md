@@ -561,3 +561,6 @@
   初始化分支并新增 `CGColorGetConstantColor(kCGColorBlack)`（iOS 14+），分别补齐
   `__builtin_available(iOS 13.0, *)` 与 `@available(iOS 14.0, *)` + `CGColorCreateForDeviceColor`
   回退；全量 460 个补丁在 159 pristine 上 `git apply --3way` 零失败通过。
+  ③ `sync-upstream.yml` 的 `sync` job 改用 `ubuntu-latest`（有合并或 `check_only` 时跑 Linux 版
+  `check-ios12.sh`），并在 `build` job 装好 Xcode 26.6 后第一步跑原生 `check-ios12.sh`，
+  避免一次发版排两次 `macos-26` 队。

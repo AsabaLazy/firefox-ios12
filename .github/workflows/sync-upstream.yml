@@ -30,8 +30,7 @@ permissions:
 jobs:
   sync:
     name: Merge upstream/main + iOS 12 compile check
-    # macOS: the check uses the same Xcode compiler + SDK as the real build
-    runs-on: macos-26
+    runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.merge.outputs.changed }}
       version: ${{ steps.merge.outputs.version }}
@@ -41,11 +40,6 @@ jobs:
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
-
-      - name: Set up Xcode 26.6
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '26.6'
 
       - name: Merge upstream if there are new commits (local, pushed after the check)
         id: merge
@@ -97,9 +91,11 @@ jobs:
 
       # Swift/ObjC availability errors used to surface only after the 4-5h Gecko
       # build (0.15.0: one .insetGrouped). Catch them here in minutes, before
-      # anything is pushed. With a fresh upstream merge, also list post-iOS-12
-      # SDK APIs in the new engine patch lines (informational, review by hand).
-      - name: iOS 12 compile check (Xcode swiftc + iPhoneOS SDK, no Gecko build)
+      # anything is pushed. When changed==false and not check_only, build job
+      # runs check-ios12.sh directly on macOS with Xcode 26.6 so we only queue
+      # for macos-26 once.
+      - name: iOS 12 compile check (when merging or check_only)
+        if: ${{ steps.merge.outputs.changed == 'true' || github.event.inputs.check_only == 'true' }}
         run: ./tools/development/check-ios12.sh ${{ steps.merge.outputs.base }}
 
       - name: Push merge to main
@@ -126,6 +122,9 @@ jobs:
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '26.6'
+
+      - name: iOS 12 compile check (Xcode swiftc + iPhoneOS SDK, no Gecko build)
+        run: ./tools/development/check-ios12.sh
 
       - name: Install build dependencies
         run: |
