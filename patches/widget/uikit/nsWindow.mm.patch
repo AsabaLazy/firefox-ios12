@@ -1,5 +1,5 @@
 diff --git a/widget/uikit/nsWindow.mm b/widget/uikit/nsWindow.mm
-index c1c4c3d..dcc7a10 100644
+index c1c4c3deb341..2089f72a2c7e 100644
 --- a/widget/uikit/nsWindow.mm
 +++ b/widget/uikit/nsWindow.mm
 @@ -11,12 +11,15 @@
@@ -53,7 +53,7 @@ index c1c4c3d..dcc7a10 100644
 +#include "mozilla/dom/WindowGlobalParent.h"
 +#include "mozilla/gfx/GPUProcessManager.h"
  #include "mozilla/gfx/Logging.h"
-+#include "mozilla/layers/APZInputBridge.h"
++#include "mozilla/layers/APZBridge.h"
 +#include "mozilla/layers/CompositorScrollUpdate.h"
 +#include "mozilla/layers/CompositorSession.h"
 +#include "mozilla/layers/CompositorThread.h"
@@ -443,8 +443,8 @@ index c1c4c3d..dcc7a10 100644
 +  // change event
 +  mGeckoChild->DoResize(bounds.x, bounds.y, bounds.width, bounds.height, false);
 +  [self updateSafeAreaInsets];
- }
- 
++}
++
 +- (void)updateSafeAreaInsets {
 +  UIWindow* window = self.window;
 +  if (!mGeckoChild || !window || !window.screen) {
@@ -480,8 +480,8 @@ index c1c4c3d..dcc7a10 100644
 +  safeAreaInsets.bottom = 0;
 +
 +  mGeckoChild->UpdateSafeAreaInsets(safeAreaInsets);
-+}
-+
+ }
+ 
 +- (void)safeAreaInsetsDidChange {
 +  [super safeAreaInsetsDidChange];
 +  [self updateSafeAreaInsets];
@@ -951,12 +951,12 @@ index c1c4c3d..dcc7a10 100644
 -  CGPoint temp = [mNativeView convertPoint:temp toView:nil];
 +  return offset;
 +}
++
++// Focus and input
  
 -  if (!mParent && mNativeView.window) {
 -    // convert to screen coords
 -    temp = [mNativeView.window convertPoint:temp toWindow:nil];
-+// Focus and input
-+
 +void nsWindow::SetFocus(Raise, mozilla::dom::CallerType) {
 +  [[mNativeView window] makeKeyWindow];
 +  [mNativeView becomeFirstResponder];
@@ -1037,16 +1037,16 @@ index c1c4c3d..dcc7a10 100644
 +    [mNativeView updateTextInteractions];
 +    return;
 +  }
- 
-   if (IsVirtualKeyboardDisabled()) {
--    [mNativeView resignFirstResponder];
++
++  if (IsVirtualKeyboardDisabled()) {
 +    mSoftwareKeyboardSuppressed = true;
 +  } else if (allowsSoftwareKeyboard) {
 +    mSoftwareKeyboardSuppressed = false;
 +  }
 +  [mNativeView updateTextInteractions];
-+
-+  if (IsVirtualKeyboardDisabled()) {
+ 
+   if (IsVirtualKeyboardDisabled()) {
+-    [mNativeView resignFirstResponder];
 +    [mNativeView cancelResponderBlur];
 +
 +    const bool shouldKeepResponderForSelection =
@@ -1071,15 +1071,15 @@ index c1c4c3d..dcc7a10 100644
 +    [mNativeView scheduleResponderBlur];
 +    return;
 +  }
-+
+ 
+-  if (aAction.UserMightRequestOpenVKB() || changingEnabledState) {
 +  // Existing first-responder ownership may be hardware-only. Software keyboard
 +  // authorization is tracked separately by mSoftwareKeyboardSuppressed.
 +  const bool shouldBecomeFirstResponder =
 +      hadFirstResponder || aAction.UserMightRequestOpenVKB() ||
 +      (aAction.mFocusChange == InputContextAction::GOT_FOCUS &&
 +       (focusFromPointerInput || focusFromKeyboardInput));
- 
--  if (aAction.UserMightRequestOpenVKB() || changingEnabledState) {
++
 +  if (shouldBecomeFirstResponder) {
 +    [mNativeView cancelResponderBlur];
 +    [mNativeView becomeFirstResponder];
@@ -1405,7 +1405,7 @@ index c1c4c3d..dcc7a10 100644
  EventDispatcher* nsWindow::GetEventDispatcher() const {
    if (mIOSView) {
      return mIOSView->mEventDispatcher;
-@@ -1206,28 +1714,133 @@ EventDispatcher* nsWindow::GetEventDispatcher() const {
+@@ -1206,28 +1714,131 @@ EventDispatcher* nsWindow::GetEventDispatcher() const {
    return nullptr;
  }
  
@@ -1447,7 +1447,7 @@ index c1c4c3d..dcc7a10 100644
 +  APZEventResult result;
 +  if (mAPZC) {
 +    MOZ_ASSERT(APZThreadUtils::IsControllerThread());
-+    result = mAPZC->InputBridge()->ReceiveInputEvent(aInput);
++    result = mAPZC->Bridge()->ReceiveInputEvent(aInput);
 +    if (result.GetStatus() == nsEventStatus_eConsumeNoDefault) {
 +      return;
 +    }
@@ -1455,9 +1455,7 @@ index c1c4c3d..dcc7a10 100644
 +
 +  WidgetWheelEvent event = aInput.ToWidgetEvent(this);
 +  if (mAPZC) {
-+    event = MayStartSwipeForAPZ(aInput, result);
-+  } else if (MayStartSwipeForNonAPZ(aInput)) {
-+    return;
++    event = MayStartSwipe(aInput, result);
 +  }
 +
 +  ProcessUntransformedAPZEvent(&event, result);
@@ -1477,13 +1475,13 @@ index c1c4c3d..dcc7a10 100644
 +    return;
 +  }
 +
-+  APZInputBridge::InputBlockCallback callback =
++  APZBridge::InputBlockCallback callback =
 +      [window = RefPtr{this}, aSequenceId](
 +          uint64_t, const APZHandledResult& aHandledResult) {
 +        window->NotifyAPZInputResult(aSequenceId, aHandledResult);
 +      };
 +  APZEventResult result =
-+      mAPZC->InputBridge()->ReceiveInputEvent(aInput, std::move(callback));
++      mAPZC->Bridge()->ReceiveInputEvent(aInput, std::move(callback));
 +
 +  if (result.GetStatus() != nsEventStatus_eConsumeNoDefault) {
 +    WidgetTouchEvent event = aInput.ToWidgetEvent(this);
@@ -1553,7 +1551,7 @@ index c1c4c3d..dcc7a10 100644
  NS_IMPL_ISUPPORTS(IOSView, nsIGeckoViewEventDispatcher, nsIGeckoViewView)
  
  nsresult IOSView::GetInitData(JSContext* aCx,
-@@ -1248,6 +1861,141 @@ nsresult IOSView::GetInitData(JSContext* aCx,
+@@ -1248,6 +1859,141 @@ nsresult IOSView::GetInitData(JSContext* aCx,
    return mWindow ? (UIView*)mWindow->GetNativeData(NS_NATIVE_WIDGET) : nil;
  }
  
@@ -1695,7 +1693,7 @@ index c1c4c3d..dcc7a10 100644
  - (void)close {
    if (mWindow) {
      if (IOSView* iosView = mWindow->GetIOSView()) {
-@@ -1261,6 +2009,7 @@ nsresult IOSView::GetInitData(JSContext* aCx,
+@@ -1261,6 +2007,7 @@ nsresult IOSView::GetInitData(JSContext* aCx,
      outerWin->ForceClose();
    }
  }

@@ -1,5 +1,5 @@
 diff --git a/gfx/layers/NativeLayerCA.mm b/gfx/layers/NativeLayerCA.mm
-index 0d8cd5a..af933a2 100644
+index 1452a1fe9d4a..96ac3abaf75e 100644
 --- a/gfx/layers/NativeLayerCA.mm
 +++ b/gfx/layers/NativeLayerCA.mm
 @@ -244,6 +244,15 @@ void NativeLayerRootCA::SetLayers(
@@ -193,7 +193,7 @@ index 0d8cd5a..af933a2 100644
        CFDictionaryRef bufferAttachments =
            CVBufferCopyAttachments(aBuffer, kCVAttachmentMode_ShouldPropagate);
        NSLog(@"Buffer attachments are %@.\n", bufferAttachments);
-@@ -1527,6 +1639,14 @@ bool NativeLayerCA::ApplyChanges(WhichRepresentation aRepresentation,
+@@ -1528,6 +1640,14 @@ bool NativeLayerCA::ApplyChanges(WhichRepresentation aRepresentation,
    return updateSucceeded;
  }
  
@@ -208,7 +208,7 @@ index 0d8cd5a..af933a2 100644
  CALayer* NativeLayerCA::UnderlyingCALayer(WhichRepresentation aRepresentation) {
    MutexAutoLock lock(mMutex);
    return GetRepresentation(aRepresentation).UnderlyingCALayer();
-@@ -1539,7 +1659,8 @@ bool NativeLayerCARepresentation::EnqueueSurface(IOSurfaceRef aSurfaceRef,
+@@ -1540,7 +1660,8 @@ bool NativeLayerCARepresentation::EnqueueSurface(IOSurfaceRef aSurfaceRef,
    AVSampleBufferDisplayLayer* videoLayer =
        (AVSampleBufferDisplayLayer*)mContentCALayer;
  
@@ -218,7 +218,7 @@ index 0d8cd5a..af933a2 100644
      if (videoLayer.requiresFlushToResumeDecoding) {
        [videoLayer flush];
      }
-@@ -1645,6 +1766,11 @@ bool NativeLayerCARepresentation::EnqueueSurface(IOSurfaceRef aSurfaceRef,
+@@ -1646,6 +1767,11 @@ bool NativeLayerCARepresentation::EnqueueSurface(IOSurfaceRef aSurfaceRef,
    if (osValue != noErr) {
      MOZ_ASSERT(sampleBuffer == nullptr,
                 "Failed call shouldn't allocate memory.");
@@ -230,15 +230,33 @@ index 0d8cd5a..af933a2 100644
  #ifdef NIGHTLY_BUILD
      if (StaticPrefs::gfx_core_animation_specialize_video_log()) {
        NSLog(@"VIDEO_LOG: EnqueueSurface failed on allocating sample buffer.");
-@@ -1843,7 +1969,10 @@ bool NativeLayerCARepresentation::ApplyChanges(
-   }
- 
-   if (aSpecializeVideo && mMutatedIsDRM) {
--    ((AVSampleBufferDisplayLayer*)mContentCALayer).preventsCapture = aIsDRM;
-+    // preventsCapture is iOS 13+.
-+    if (__builtin_available(iOS 13.0, *)) {
-+      ((AVSampleBufferDisplayLayer*)mContentCALayer).preventsCapture = aIsDRM;
-+    }
-   }
- 
-   bool shouldTintOpaqueness = StaticPrefs::gfx_core_animation_tint_opaque();
+@@ -1820,15 +1946,26 @@ bool NativeLayerCARepresentation::ApplyChanges(
+         [(AVSampleBufferDisplayLayer*)mContentCALayer
+             setControlTimebase:timebase];
+         CFRelease(timebase);
+-        ((AVSampleBufferDisplayLayer*)mContentCALayer).preventsCapture = aIsDRM;
++        // preventsCapture is iOS 13+; CGColorGetConstantColor is iOS 14+.
++        if (__builtin_available(iOS 13.0, *)) {
++          ((AVSampleBufferDisplayLayer*)mContentCALayer).preventsCapture =
++              aIsDRM;
++        }
+         if (aIsDRM) {
+           mProtectedBackingLayer = [[CALayer layer] retain];
+           mProtectedBackingLayer.position = CGPointZero;
+           mProtectedBackingLayer.anchorPoint = CGPointZero;
+           mProtectedBackingLayer.edgeAntialiasingMask = 0;
+           mProtectedBackingLayer.opaque = YES;
+-          mProtectedBackingLayer.backgroundColor =
+-              CGColorGetConstantColor(kCGColorBlack);
++          if (@available(iOS 14.0, *)) {
++            mProtectedBackingLayer.backgroundColor =
++                CGColorGetConstantColor(kCGColorBlack);
++          } else {
++            CGColorRef black =
++                CGColorCreateForDeviceColor(gfx::DeviceColor(0, 0, 0, 1));
++            mProtectedBackingLayer.backgroundColor = black;
++            CGColorRelease(black);
++          }
+           [mRoundedClipCALayer addSublayer:mProtectedBackingLayer];
+         }
+       } else {

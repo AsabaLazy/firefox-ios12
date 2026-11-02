@@ -551,3 +551,13 @@
   `0.19.0-ios12` release → nojemalloc 按 release-job 条件自动连锁再约 3h。
   注：本地 dist 包带 http 探针、且只有 jemalloc，故不手发；用户要的“懒”=
   dispatch 一下，CI 全包。
+- **0.20.0 合并与发版（2026-11-03，上游 `24a99b71`→`e81351fd` 共 3 提交：引擎 159.0）**：
+  ① 复盘 0.19.0 CI 6h 超时（run 40374073167）与 11-02 定时同步失败（run 41414453122）：
+  上游 `9b1a8f57` 已定位 `mach build` 末尾调 `terminal-notifier` 会卡死 GHA runner，
+  两份自有 workflow（`sync-upstream.yml`/`build-nojemalloc.yml`）同步补 `MOZ_NOSPAM: "1"`；
+  ② 合并 `upstream/main`（`FIREFOX_159_0_RELEASE`，`9a2dc53c369c`）：按 159 pristine
+  sparse-checkout 三方重建 3 个冲突补丁（`NativeLayerCA.mm.patch`/`StaticPrefList.yaml.patch`/
+  `nsWindow.mm.patch`），其中 159 新增的 DRM 保护层逻辑把 `preventsCapture`（iOS 13+）挪入
+  初始化分支并新增 `CGColorGetConstantColor(kCGColorBlack)`（iOS 14+），分别补齐
+  `__builtin_available(iOS 13.0, *)` 与 `@available(iOS 14.0, *)` + `CGColorCreateForDeviceColor`
+  回退；全量 460 个补丁在 159 pristine 上 `git apply --3way` 零失败通过。
