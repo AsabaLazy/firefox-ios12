@@ -24,6 +24,18 @@ if ! rustup target list | grep -q "^$RUST_TARGET (installed)"; then
 fi
 
 export IPHONEOS_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET"
+if [ "$(uname -s)" != "Darwin" ]; then
+  CACHE="${CHECK_CACHE:-$HOME/.cache/reynard-ios12-check}"
+  SDK_VERSION="${SDK_VERSION:-26.5}"
+  IOS_SDK_DIR="$CACHE/ios-sdks/iPhoneOS$SDK_VERSION.sdk"
+  export PATH="$CACHE/bin:$HOME/.mozbuild/clang/bin:$PATH"
+  export SDKROOT="$IOS_SDK_DIR"
+  export CC_aarch64_apple_ios="clang"
+  export CXX_aarch64_apple_ios="clang++"
+  export AR_aarch64_apple_ios="llvm-ar"
+  export CFLAGS_aarch64_apple_ios="--target=aarch64-apple-ios${DEPLOYMENT_TARGET} -isysroot $IOS_SDK_DIR"
+  export CXXFLAGS_aarch64_apple_ios="--target=aarch64-apple-ios${DEPLOYMENT_TARGET} -isysroot $IOS_SDK_DIR"
+fi
 if [ -n "${RUSTFLAGS:-}" ]; then
   export RUSTFLAGS="${RUSTFLAGS} -C link-arg=${DEPLOYMENT_FLAG}"
 else

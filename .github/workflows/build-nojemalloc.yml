@@ -65,11 +65,11 @@ jobs:
           fi
           echo "should_build=false" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: Build jailbroken IPA (no-jemalloc)
+  build-gecko:
+    name: Cross-build Gecko & idevice on Linux (no-jemalloc)
     needs: check
     if: ${{ needs.check.outputs.should_build == 'true' }}
-    runs-on: macos-26
+    runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -81,20 +81,18 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      - name: Set up Xcode 26.6
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '26.6'
-
-      - name: iOS 12 compile check (Xcode swiftc + iPhoneOS SDK, no Gecko build)
-        run: ./tools/development/check-ios12.sh
-
-      - name: Install build dependencies
+      - name: Install Linux build dependencies
         run: |
-          brew install python@3.12 lld cbindgen llvm
-          echo "$(brew --prefix python@3.12)/libexec/bin" >> "$GITHUB_PATH"
-          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
-          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install -y zsh zstd
+
+      - name: Set up Python 3.12 (Mach requires <= 3.14)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: iOS 12 compile check (Swift 6.3.2 + iPhoneOS SDK, no Gecko build)
+        run: ./tools/development/check-ios12.sh
 
       - name: Initialize submodules
         run: |
@@ -117,44 +115,81 @@ jobs:
         id: rust_toolchain
         run: echo "hash=$(rustc -Vv | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
-      - name: Restore Gecko dependency cache (no-jemalloc)
+      - name: Restore Gecko dependency cache (Linux no-jemalloc)
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ~/.mozbuild
-          key: ios12-gecko-deps-nojemalloc-${{ steps.rust_toolchain.outputs.hash }}-${{ hashFiles('engine/release.txt') }}
+          key: ios12-linux-gecko-deps-nojemalloc-${{ steps.rust_toolchain.outputs.hash }}-${{ hashFiles('engine/release.txt') }}
           restore-keys: |
-            ios12-gecko-deps-nojemalloc-${{ steps.rust_toolchain.outputs.hash }}-
-            ios12-gecko-deps-${{ steps.rust_toolchain.outputs.hash }}-
+            ios12-linux-gecko-deps-nojemalloc-${{ steps.rust_toolchain.outputs.hash }}-
+            ios12-linux-gecko-deps-${{ steps.rust_toolchain.outputs.hash }}-
 
-      - name: Restore idevice build cache
+      - name: Restore idevice build cache (Linux)
         uses: actions/cache@v4
         with:
           path: |
             support/idevice/target
             browser/Reynard/JIT/RPPairing/libidevice_ffi.a
-          key: ios12-idevice-${{ steps.rust_toolchain.outputs.hash }}-${{ hashFiles('support/idevice/Cargo.lock', 'support/idevice/Cargo.toml', 'tools/development/build-idevice.sh') }}
+          key: ios12-linux-idevice-${{ steps.rust_toolchain.outputs.hash }}-${{ hashFiles('support/idevice/Cargo.lock', 'support/idevice/Cargo.toml', 'tools/development/build-idevice.sh') }}
           restore-keys: |
-            ios12-idevice-${{ steps.rust_toolchain.outputs.hash }}-
+            ios12-linux-idevice-${{ steps.rust_toolchain.outputs.hash }}-
 
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.11
 
-      - name: Build Gecko (no jemalloc)
+      - name: Build Gecko on Linux (no jemalloc)
         env:
-          CC: clang
-          CXX: clang++
-          LD: ld64.lld
           MOZ_NOSPAM: "1"
         run: ./tools/development/build-gecko.sh --disable-jemalloc --use-sccache --auto-clobber
 
-      - name: Build idevice support library
+      - name: Build idevice support library on Linux
         run: ./tools/development/build-idevice.sh
 
-      - name: Install packaging dependencies
-        run: brew install ldid
+      - name: Pack Gecko dist + idevice for macOS Xcode packaging
+        run: |
+          tar -chf - \
+            engine/firefox/obj-aarch64-apple-ios/dist \
+            engine/firefox/toolkit/mozapps/extensions/default-theme \
+            browser/Reynard/JIT/RPPairing/libidevice_ffi.a \
+            | zstd -T0 -3 -o gecko-ios-dist-nojemalloc.tar.zst
+
+      - name: Upload Gecko dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gecko-ios-dist-nojemalloc
+          path: gecko-ios-dist-nojemalloc.tar.zst
+          if-no-files-found: error
+
+  build:
+    name: Package jailbroken IPA on macOS (no-jemalloc)
+    needs: build-gecko
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Set up Xcode 26.6
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.6'
+
+      - name: Download Gecko dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gecko-ios-dist-nojemalloc
+
+      - name: Extract Gecko dist & install ldid
+        run: |
+          brew install ldid zstd
+          zstd -dc gecko-ios-dist-nojemalloc.tar.zst | tar -xf -
 
       - name: Build app
         run: ./tools/release/build-app.sh --no-signing
