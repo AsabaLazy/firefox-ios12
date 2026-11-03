@@ -81,10 +81,20 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      - name: Install Linux build dependencies
+      - name: Install Linux build dependencies & expand swap/disk
         run: |
+          sudo systemctl stop systemd-oomd.socket systemd-oomd.service 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost &
+          sudo fallocate -l 16G /mnt/swapfile || sudo fallocate -l 16G /swapfile
+          SWAPF="$([ -f /mnt/swapfile ] && echo /mnt/swapfile || echo /swapfile)"
+          sudo chmod 600 "$SWAPF"
+          sudo mkswap "$SWAPF"
+          sudo swapon "$SWAPF"
           sudo apt-get update
           sudo apt-get install -y zsh zstd
+          wait
+          df -h
+          free -h
 
       - name: Set up Python 3.12 (Mach requires <= 3.14)
         uses: actions/setup-python@v5
