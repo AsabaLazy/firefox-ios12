@@ -564,3 +564,8 @@
   ③ `sync-upstream.yml` 的 `sync` job 改用 `ubuntu-latest`（有合并或 `check_only` 时跑 Linux 版
   `check-ios12.sh`），并在 `build` job 装好 Xcode 26.6 后第一步跑原生 `check-ios12.sh`，
   避免一次发版排两次 `macos-26` 队。
+  ④ 同日跟进上游 2 个新提交（`ae814cba` 书签/历史长按菜单、`9635300f` beforeunload 弹窗）：
+  `BookmarksViewController`/`HistoryViewController` 的 `contextMenuConfigurationForRowAt`
+  补 `@available(iOS 13.0, *)`；`PromptDelegate`/`PromptPresenter` 的 `beforeUnload` 改为
+  completion 回调（零 Concurrency）；`check-ios12.sh` 在 Ubuntu 26.04 runner 上自动回退
+  下载 `ubuntu24.04` 版 Swift 6.3.2 工具链（修复 swift.org 无 `ubuntu2604` 包导致 404）。
