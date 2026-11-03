@@ -55,7 +55,7 @@ else
 		. /etc/os-release
 		DIST="${ID}${VERSION_ID}"; DIST_NODOT="${DIST//./}"
 		URL="https://download.swift.org/swift-$SWIFT_VERSION-release/$DIST_NODOT/swift-$SWIFT_VERSION-RELEASE/swift-$SWIFT_VERSION-RELEASE-$DIST.tar.gz"
-		if ! curl -fsSI "$URL" >/dev/null 2>&1; then
+		if [ "$DIST" = "ubuntu26.04" ] || ! curl -fsSIL "$URL" >/dev/null 2>&1; then
 			DIST="ubuntu24.04"; DIST_NODOT="ubuntu2404"
 			URL="https://download.swift.org/swift-$SWIFT_VERSION-release/$DIST_NODOT/swift-$SWIFT_VERSION-RELEASE/swift-$SWIFT_VERSION-RELEASE-$DIST.tar.gz"
 		fi
