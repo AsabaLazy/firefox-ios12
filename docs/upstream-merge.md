@@ -566,6 +566,9 @@
   避免一次发版排两次 `macos-26` 队。
   ④ 同日跟进上游 2 个新提交（`ae814cba` 书签/历史长按菜单、`9635300f` beforeunload 弹窗）：
   `BookmarksViewController`/`HistoryViewController` 的 `contextMenuConfigurationForRowAt`
-  补 `@available(iOS 13.0, *)`；`PromptDelegate`/`PromptPresenter` 的 `beforeUnload` 改为
-  completion 回调（零 Concurrency）；`check-ios12.sh` 在 Ubuntu 26.04 runner 上自动回退
-  下载 `ubuntu24.04` 版 Swift 6.3.2 工具链（修复 swift.org 无 `ubuntu2604` 包导致 404）。
+  加 `@available(iOS 13.0, *)`，并在 `#unavailable(iOS 13.0)` 下通过
+  `UILongPressGestureRecognizer` + `cell.compatPresentMenu`（`CompatMenuAction` actionSheet）
+  补齐 iOS 12 真机长按菜单（Copy / Copy Contents / Open in New Tab(s) / Edit / Delete）；
+  `PromptDelegate`/`PromptPresenter` 的 `beforeUnload` 改为 completion 回调（零 Concurrency）；
+  `check-ios12.sh` 在 Ubuntu 26.04 runner 上自动回退下载 `ubuntu24.04` 版 Swift 6.3.2 工具链
+  （修复 swift.org 无 `ubuntu2604` 包导致 404）。

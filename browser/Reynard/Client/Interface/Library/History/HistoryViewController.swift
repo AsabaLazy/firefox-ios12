@@ -131,6 +131,10 @@ final class HistoryViewController: UIViewController, UITableViewDataSource, UITa
         tapGesture.cancelsTouchesInView = false
         tapGesture.delegate = self
         tableView.addGestureRecognizer(tapGesture)
+        if #unavailable(iOS 13.0) {
+            let longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLegacyContextMenuLongPress(_:)))
+            tableView.addGestureRecognizer(longPressGesture)
+        }
         
         refreshHistoryPresence()
         reloadHistory()
@@ -617,6 +621,38 @@ final class HistoryViewController: UIViewController, UITableViewDataSource, UITa
                 UIMenu(title: "", options: .displayInline, children: [delete]),
             ])
         }
+    }
+
+    @objc private func handleLegacyContextMenuLongPress(_ gestureRecognizer: UILongPressGestureRecognizer) {
+        guard gestureRecognizer.state == .began,
+              !isEditing,
+              let indexPath = tableView.indexPathForRow(at: gestureRecognizer.location(in: tableView)),
+              let cell = tableView.cellForRow(at: indexPath),
+              let item = item(at: indexPath) else {
+            return
+        }
+
+        cell.compatPresentMenu([
+            CompatMenuAction(title: NSLocalizedString("Copy", comment: "")) {
+                UIPasteboard.general.string = item.url.absoluteString
+            },
+            CompatMenuAction(title: NSLocalizedString("Open in New Tab", comment: "")) { [weak self] in
+                guard let self,
+                      let browser = LibrarySharedUtils.resolvedBrowserViewController(from: self) else {
+                    return
+                }
+                browser.loadViewIfNeeded()
+                browser.exitFullscreenIfNeeded()
+                browser.tabManager.createTab(selecting: true)
+                browser.tabManager.browse(to: item.url.absoluteString)
+                if self.navigationController?.presentingViewController is BrowserViewController {
+                    self.navigationController?.dismiss(animated: true)
+                }
+            },
+            CompatMenuAction(title: NSLocalizedString("Delete", comment: ""), style: .destructive) {
+                HistoryStore.shared.removeSite(id: item.id)
+            },
+        ])
     }
     
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

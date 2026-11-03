@@ -127,6 +127,10 @@ final class BookmarksViewController: UIViewController, UITableViewDataSource, UI
             tapGesture.delegate = self
             tableView.addGestureRecognizer(tapGesture)
         }
+        if #unavailable(iOS 13.0) {
+            let longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLegacyContextMenuLongPress(_:)))
+            tableView.addGestureRecognizer(longPressGesture)
+        }
         
         NotificationCenter.default.addObserver(
             self,
@@ -484,6 +488,76 @@ final class BookmarksViewController: UIViewController, UITableViewDataSource, UI
                 UIMenu(title: "", options: .displayInline, children: actions),
             ])
         }
+    }
+
+    @objc private func handleLegacyContextMenuLongPress(_ gestureRecognizer: UILongPressGestureRecognizer) {
+        guard gestureRecognizer.state == .began,
+              !isEditing,
+              let indexPath = tableView.indexPathForRow(at: gestureRecognizer.location(in: tableView)),
+              let cell = tableView.cellForRow(at: indexPath),
+              let item = item(at: indexPath) else {
+            return
+        }
+
+        let urls: [URL]
+        let copyTitle: String
+        let openTitle: String
+        let canDelete: Bool
+
+        switch item {
+        case let .bookmark(bookmark):
+            urls = [bookmark.url]
+            copyTitle = NSLocalizedString("Copy", comment: "")
+            openTitle = NSLocalizedString("Open in New Tab", comment: "")
+            canDelete = true
+        case let .folder(folder):
+            urls = bookmarkURLs(in: folder.guid)
+            copyTitle = NSLocalizedString("Copy Contents", comment: "")
+            openTitle = NSLocalizedString("Open in New Tabs", comment: "")
+            canDelete = !folder.isProtected
+        }
+
+        var actions: [CompatMenuAction] = [
+            CompatMenuAction(title: copyTitle) {
+                UIPasteboard.general.string = urls.map(\.absoluteString).joined(separator: "\n")
+            },
+            CompatMenuAction(title: openTitle) { [weak self] in
+                guard let self,
+                      let browser = LibrarySharedUtils.resolvedBrowserViewController(from: self) else {
+                    return
+                }
+                browser.loadViewIfNeeded()
+                browser.exitFullscreenIfNeeded()
+                for url in urls {
+                    browser.tabManager.createTab(selecting: true)
+                    browser.tabManager.browse(to: url.absoluteString)
+                }
+                if self.navigationController?.presentingViewController is BrowserViewController {
+                    self.navigationController?.dismiss(animated: true)
+                }
+            },
+        ]
+
+        if case let .bookmark(bookmark) = item {
+            actions.append(CompatMenuAction(title: NSLocalizedString("Edit", comment: "")) { [weak self] in
+                self?.editBookmark(bookmark)
+            })
+        }
+
+        if canDelete {
+            actions.append(CompatMenuAction(title: NSLocalizedString("Delete", comment: ""), style: .destructive) { [weak self] in
+                guard let self else { return }
+                switch item {
+                case let .bookmark(bookmark):
+                    _ = self.store.removeBookmark(guid: bookmark.guid)
+                case let .folder(folder):
+                    _ = self.store.removeFolder(guid: folder.guid)
+                }
+                self.reloadBookmarkRows()
+            })
+        }
+
+        cell.compatPresentMenu(actions)
     }
     
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
