@@ -172,6 +172,23 @@ while IFS= read -r f; do
 		"$f" 2>&1 | grep -E "error:|unguarded-availability" && rc=1
 done < <(find "$B" \( -name "*.m" -o -name "*.mm" -o -name "*.c" \) | sort)
 
+# Guard against unannotated private ObjC class forward declarations (@interface _Foo : ...)
+# which cause strong _OBJC_CLASS_$_ symbol links that dyld kills on iOS 12 at launch.
+python3 - "$B" <<'EOF' || rc=1
+import glob, re, sys
+bad = []
+for f in sorted(glob.glob(sys.argv[1] + '/**/*.h', recursive=True)):
+    lines = open(f).read().splitlines()
+    for i, line in enumerate(lines):
+        if re.match(r'^\s*@interface\s+_[A-Za-z0-9_]+\s*:', line):
+            prev = '\n'.join(lines[max(0, i-2):i+1])
+            if 'API_AVAILABLE' not in prev and '__IOS_AVAILABLE' not in prev:
+                bad.append(f"{f}:{i+1}: {line.strip()} (missing API_AVAILABLE)")
+for b in bad:
+    print("unguarded private ObjC class:", b)
+sys.exit(1 if bad else 0)
+EOF
+
 # --- image assets ------------------------------------------------------------
 echo "== image assets"
 python3 - "$B" <<'EOF' || rc=1

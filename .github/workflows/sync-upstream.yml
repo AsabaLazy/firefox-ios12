@@ -19,6 +19,10 @@ on:
     - cron: '0 2 * * 1'
   workflow_dispatch:
     inputs:
+      sync_upstream:
+        description: "Fetch and merge upstream/main before building (default false on manual dispatch)"
+        type: boolean
+        default: false
       check_only:
         description: "Only run upstream-merge dry run + iOS 12 compile check (no push, no build, no release)"
         type: boolean
@@ -46,8 +50,8 @@ jobs:
         run: |
           set -eu
           BASE=""
-          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
-            echo "non-main ref (${{ github.ref_name }}): build-only verification, skip upstream merge"
+          if [ "${{ github.ref }}" != "refs/heads/main" ] || { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.sync_upstream }}" != "true" ] && [ "${{ github.event.inputs.check_only }}" != "true" ]; }; then
+            echo "skip upstream merge (ref=${{ github.ref_name }}, event=${{ github.event_name }}, sync_upstream=${{ github.event.inputs.sync_upstream }})"
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "base=" >> "$GITHUB_OUTPUT"
             VERSION="$(sed -n 's/^CURRENT_VERSION = //p' browser/Configuration/Reynard.xcconfig | tr -d ' ')"

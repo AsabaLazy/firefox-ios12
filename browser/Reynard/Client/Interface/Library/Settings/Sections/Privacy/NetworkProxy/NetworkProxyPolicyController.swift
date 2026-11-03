@@ -64,7 +64,7 @@ enum NetworkProxyPolicyController {
     /// NOTE: SCDynamicStoreCopyProxies is macOS-only ('unavailable in iOS'),
     /// CFNetworkCopySystemProxySettings is the iOS-capable equivalent.
     static func currentSystemProxy() -> (host: String, port: Int)? {
-        guard let proxies = CFNetworkCopySystemProxySettings() as? [String: Any] else {
+        guard let proxies = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] else {
             return nil
         }
         let enabled = (proxies[kCFNetworkProxiesHTTPEnable as String] as? Int ?? 0) != 0

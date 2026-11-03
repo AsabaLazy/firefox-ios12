@@ -572,3 +572,8 @@
   `PromptDelegate`/`PromptPresenter` 的 `beforeUnload` 改为 completion 回调（零 Concurrency）；
   `check-ios12.sh` 在 Ubuntu 26.04 runner 上自动回退下载 `ubuntu24.04` 版 Swift 6.3.2 工具链
   （修复 swift.org 无 `ubuntu2604` 包导致 404）。
+  ⑤ 健康度加固：修 `NetworkProxyPolicyController.currentSystemProxy()` 漏调
+  `takeRetainedValue()` 导致“系统代理”恒为 nil 的 bug；在 `check-ios12.sh` 增加私有 ObjC 类声明
+  （`@interface _... :`）必须标 `API_AVAILABLE` 的门禁（防 dyld 强链接崩溃复发）；
+  `sync-upstream.yml` 手动 dispatch 新增 `sync_upstream` 开关（默认 `false`，直接编 `main`，
+  避免手动发版时意外拉入未做 iOS 12 移植的上游新提交）。
